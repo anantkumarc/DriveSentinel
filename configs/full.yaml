@@ -133,6 +133,10 @@ fusion:
 alerts:
   entry_persistence_seconds: 0.0
   distraction_entry_persistence_seconds: 0.0
+  # Confirm phone detections briefly to suppress one-frame false positives;
+  # head-turn and downward-look timers remain controlled by head_distraction.
+  phone_presence_entry_persistence_seconds: 1.0
+  phone_presence_recovery_persistence_seconds: 0.5
   # Briefly bridge detector dropouts for non-head evidence; sustained head
   # warnings clear immediately through the head-specific recovery override.
   recovery_persistence_seconds: 1.5

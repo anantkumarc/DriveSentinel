@@ -33,6 +33,18 @@ from dms.detectors.phone_interaction import PhoneInteractionEstimator, PhoneInte
 from dms.fusion.base import RiskDecision, RiskState
 from dms.fusion.engine import RiskFusionEngine, FusionOutput
 from dms.health.watchdog import CaptureWatchdog
+from dms.model_assets import (
+    ModelCheck,
+    ModelIntegrityError,
+    ModelManagementError,
+    check_line,
+    configured_model_requirements,
+    download_missing_models,
+    inspect_configured_models,
+    registered_model_requirements,
+    required_model_failure,
+    verify_managed_model,
+)
 from dms.telemetry.logger import JsonlWriter
 from dms.temporal.eye_closure import ClosureDecision, EyeClosureTimer
 from dms.temporal.head_distraction import (
@@ -409,6 +421,7 @@ def _init_optional_detectors(
         phone_path = _resolve(root, phone_cfg.get("model", default_model))
         assets["phone"] = phone_path
         try:
+            verify_managed_model(phone_path, root)
             if backend == "mediapipe":
                 phone = MediaPipePhoneDetector(
                     phone_path,
@@ -436,6 +449,7 @@ def _init_optional_detectors(
         hand_path = _resolve(root, hand_cfg.get("model", "models/hand_landmarker.task"))
         assets["hand"] = hand_path
         try:
+            verify_managed_model(hand_path, root)
             hands = HandLandmarksDetector(hand_path)
             status["hands"] = "ready"
         except (FileNotFoundError, ImportError, OSError, ValueError, RuntimeError) as exc:
@@ -662,6 +676,27 @@ def _run(args: argparse.Namespace) -> int:
     config_path = Path(args.config).expanduser().resolve()
     config = _load_config(config_path)
     root = config_path.parent.parent
+    model_checks = inspect_configured_models(config, root)
+    face_check = next((item for item in model_checks if item.requirement.key == "face"), None)
+    if face_check is None:
+        raise RuntimeError("configuration did not produce a required Face Landmarker model entry")
+    if face_check.status == "missing":
+        if face_check.requirement.asset is None:
+            raise FileNotFoundError(
+                f"Required face model is missing: {face_check.requirement.path}. This custom model path "
+                "has no project-approved download source. Install a compatible model there, or configure "
+                "models/face_landmarker.task and run `drive --download-models`."
+            )
+        raise FileNotFoundError(
+            f"Required face model is missing: {face_check.requirement.path}. "
+            "Run `drive --download-models`, then `drive --check-models`."
+        )
+    if face_check.status == "invalid":
+        raise ModelIntegrityError(
+            f"{check_line(face_check, root)}. The existing file was left untouched. "
+            "Move or remove it, then run `drive --download-models` to fetch the pinned model."
+        )
+    _warn_about_optional_models(model_checks, root)
     camera_cfg = config["camera"]
     face_cfg = config["face"]
     head_distraction_cfg = _section(config, "head_distraction")
@@ -698,8 +733,6 @@ def _run(args: argparse.Namespace) -> int:
 
     source = _parse_source(args.source if args.source is not None else camera_cfg["source"])
     face_model = _resolve(root, face_cfg["model"])
-    if not face_model.is_file():
-        raise FileNotFoundError(f"Face Landmarker model not found: {face_model}. Follow models/README.md.")
     mouth_detector, mouth_tracker, pose_estimator, phone_detector, hand_detector, interaction_estimator, assets, detector_status = _init_optional_detectors(config, root)
     assets["face"] = face_model
     face_detector = FaceLandmarksDetector(
@@ -785,6 +818,12 @@ def _run(args: argparse.Namespace) -> int:
     alert_gap_s = float(alert_cfg.get("max_sample_gap_seconds", eyes_cfg["max_sample_gap_seconds"]))
     drowsiness_machine = AlertStateMachine("drowsiness", entry_persistence_s=entry_s, recovery_persistence_s=recovery_s, repeat_cooldown_s=cooldown_s, max_sample_gap_s=alert_gap_s)
     distraction_entry_s = float(alert_cfg.get("distraction_entry_persistence_seconds", 0.0))
+    phone_presence_entry_s = float(
+        alert_cfg.get("phone_presence_entry_persistence_seconds", 1.0)
+    )
+    phone_presence_recovery_s = float(
+        alert_cfg.get("phone_presence_recovery_persistence_seconds", 0.5)
+    )
     distraction_machine = AlertStateMachine(
         "distraction",
         entry_persistence_s=distraction_entry_s,
@@ -1130,6 +1169,13 @@ def _run(args: argparse.Namespace) -> int:
             previous_drowsiness = current_drowsiness_alert
             previous_distraction = current_distraction_alert
             current_drowsiness_alert = drowsiness_machine.update(fusion.drowsiness, run_time_s)
+            active_head_reasons = set(fusion.distraction.reasons) & _HEAD_DISTRACTION_REASONS
+            phone_presence_candidate = "phone_presence" in fusion.distraction.reasons
+            distraction_entry_override = (
+                0.0
+                if active_head_reasons
+                else phone_presence_entry_s if phone_presence_candidate else None
+            )
             # The head tracker has already required valid forward recovery for
             # its configured duration; don't stack the alert machine's timer
             # on top for a head-only episode.
@@ -1139,10 +1185,21 @@ def _run(args: argparse.Namespace) -> int:
                 and bool(set(previous_distraction.reasons) & _HEAD_DISTRACTION_REASONS)
                 and not current_head_distraction.active
             )
+            phone_presence_resolved = (
+                "phone_presence" in previous_distraction.reasons
+                and not (set(previous_distraction.reasons) & _HEAD_DISTRACTION_REASONS)
+                and not phone_presence_candidate
+            )
+            recovery_override = (
+                0.0
+                if head_recovery_already_persisted
+                else phone_presence_recovery_s if phone_presence_resolved else None
+            )
             current_distraction_alert = distraction_machine.update(
                 fusion.distraction,
                 run_time_s,
-                recovery_persistence_override_s=(0.0 if head_recovery_already_persisted else None),
+                entry_persistence_override_s=distraction_entry_override,
+                recovery_persistence_override_s=recovery_override,
             )
             _log_alert_transition(logger, previous_drowsiness, current_drowsiness_alert, run_time_s)
             _log_alert_transition(logger, previous_distraction, current_distraction_alert, run_time_s)
@@ -1343,6 +1400,22 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Local multimodal driver-monitoring research prototype")
     parser.add_argument("--config", default="configs/full.yaml", help="YAML configuration path")
     parser.add_argument("--source", help="camera index (for example 0) or local video file path")
+    parser.add_argument(
+        "--check-models",
+        action="store_true",
+        help="report required and configured optional model files and verify pinned SHA-256 values",
+    )
+    parser.add_argument(
+        "--download-models",
+        action="store_true",
+        help="download missing required model files for the selected configuration",
+    )
+    parser.add_argument(
+        "--all",
+        dest="all_models",
+        action="store_true",
+        help="with --download-models, include all supported optional model bundles",
+    )
     parser.add_argument("--run-dir", help="new output directory; existing directories are never overwritten")
     parser.add_argument("--seconds", type=float, help="stop after this many seconds")
     parser.add_argument("--headless", action="store_true", help="disable the preview window")
@@ -1360,12 +1433,109 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _warn_about_optional_models(checks: tuple[ModelCheck, ...], root: Path) -> None:
+    for check in checks:
+        requirement = check.requirement
+        if requirement.required:
+            if check.status in {"missing", "invalid", "not_configured"}:
+                print(f"dms: warning: {check_line(check, root)}", file=sys.stderr)
+            elif check.status == "unverified":
+                print(
+                    f"dms: warning: required custom model has no project-pinned SHA-256: "
+                    f"{requirement.path}. Its model format will be checked by the detector at load time.",
+                    file=sys.stderr,
+                )
+            continue
+        if check.status == "missing":
+            if requirement.asset is not None:
+                next_step = "Run `drive --download-models --all` to install it."
+            else:
+                next_step = "Install a trusted compatible file manually; no project download is registered."
+            print(
+                f"dms: warning: optional {requirement.label} is missing at {requirement.path}; "
+                f"that detector will be unavailable. {next_step}",
+                file=sys.stderr,
+            )
+        elif check.status == "invalid":
+            print(
+                f"dms: warning: optional model rejected: {check_line(check, root)}. "
+                "That detector will be unavailable; the existing file was left untouched. "
+                "Move or remove it, then run `drive --download-models --all` to fetch the pinned bundle.",
+                file=sys.stderr,
+            )
+        elif check.status == "unverified":
+            print(
+                f"dms: warning: custom model has no project-pinned SHA-256: "
+                f"{requirement.path}. Its model format will be checked by the detector at load time.",
+                file=sys.stderr,
+            )
+
+
+def _model_command(args: argparse.Namespace) -> int:
+    config_path = Path(args.config).expanduser().resolve()
+    config = _load_config(config_path)
+    root = config_path.parent.parent
+    if args.fusion_method is not None:
+        config = dict(config)
+        fusion = dict(_section(config, "fusion"))
+        fusion["method"] = args.fusion_method
+        config["fusion"] = fusion
+
+    requirements = configured_model_requirements(config, root)
+    if args.check_models:
+        checks = inspect_configured_models(config, root)
+        print(f"Model files for {config_path}:")
+        for check in checks:
+            print(f"  {check_line(check, root)}")
+        if any(item.status == "missing" and not item.requirement.required for item in checks):
+            print("Optional model bundles can be installed with `drive --download-models --all`.")
+        if any(item.status == "unverified" for item in checks):
+            print("Custom model files have no project-pinned digest; review their source and compatibility.")
+        return 1 if required_model_failure(checks) else 0
+
+    if args.all_models:
+        selected = registered_model_requirements(root, requirements)
+        print("Downloading missing supported model bundles (required and optional):")
+    else:
+        selected = tuple(item for item in requirements if item.required and item.asset is not None)
+        print("Downloading missing required model files for the selected configuration:")
+
+    if not selected:
+        print("No automatically downloadable model files are required by this configuration.")
+    results = download_missing_models(selected, root)
+    failed = False
+    for result in results:
+        if result.status == "downloaded":
+            print(f"  Downloaded and SHA-256 verified: {result.asset.label} -> {result.path}")
+        elif result.status == "already_verified":
+            print(f"  Already present and SHA-256 verified: {result.path}")
+        else:
+            failed = True
+            print(f"  ERROR {result.asset.label}: {result.message}", file=sys.stderr)
+
+    checks = inspect_configured_models(config, root)
+    print("\nModel status after download:")
+    for check in checks:
+        print(f"  {check_line(check, root)}")
+    if any(item.status == "missing" and not item.requirement.required for item in checks):
+        print("Optional model bundles not included in this download can be installed with `drive --download-models --all`.")
+    if any(item.status == "unverified" for item in checks):
+        print("Custom model files have no project-pinned digest; review their source and compatibility.")
+    return 1 if failed or required_model_failure(checks) else 0
+
+
 def main() -> int:
     parser = _parser()
     args = parser.parse_args()
+    if args.check_models and args.download_models:
+        parser.error("choose either --check-models or --download-models")
+    if args.all_models and not args.download_models:
+        parser.error("--all is only valid with --download-models")
     if args.seconds is not None and (not math.isfinite(args.seconds) or args.seconds <= 0):
         parser.error("--seconds must be a positive finite number")
     try:
+        if args.check_models or args.download_models:
+            return _model_command(args)
         return _run(args)
     except (FileNotFoundError, ImportError, ValueError, RuntimeError, OSError, KeyError) as exc:
         print(f"dms: {exc}", file=sys.stderr)

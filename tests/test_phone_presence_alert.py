@@ -9,7 +9,8 @@ from dms.detectors.head_pose import HeadPoseObservation
 from dms.detectors.mouth import MouthCandidateDecision, MouthState
 from dms.detectors.phone_boxes import Box, PhoneDetection
 from dms.detectors.phone_interaction import PhoneInteractionEstimator
-from dms.fusion.base import RiskState
+from dms.alerts.states import AlertLevel, AlertStateMachine
+from dms.fusion.base import RiskDecision, RiskState
 from dms.fusion.engine import RiskFusionEngine
 from dms.temporal.windows import WindowFeature
 
@@ -54,6 +55,56 @@ class PhonePresenceAlertTests(unittest.TestCase):
 
         self.assertIs(output.distraction.state, RiskState.HIGH_CANDIDATE)
         self.assertIn("phone_presence", output.distraction.reasons)
+
+    def test_brief_phone_detection_does_not_activate_the_alert(self) -> None:
+        machine = AlertStateMachine(
+            "distraction", entry_persistence_s=0.0, recovery_persistence_s=0.5, max_sample_gap_s=2.0
+        )
+        phone = RiskDecision(
+            "distraction", RiskState.HIGH_CANDIDATE, 1.0, ("phone_presence",), (), (), "rules"
+        )
+        clear = RiskDecision("distraction", RiskState.NO_TRIGGER, 0.0, (), (), (), "rules")
+
+        self.assertIs(
+            machine.update(phone, 0.0, entry_persistence_override_s=1.0).level,
+            AlertLevel.NONE,
+        )
+        self.assertIs(machine.update(clear, 0.2).level, AlertLevel.NONE)
+        self.assertIs(
+            machine.update(phone, 0.4, entry_persistence_override_s=1.0).level,
+            AlertLevel.NONE,
+        )
+
+    def test_confirmed_phone_alerts_after_persistence_but_head_alert_stays_immediate(self) -> None:
+        machine = AlertStateMachine(
+            "distraction", entry_persistence_s=0.0, recovery_persistence_s=0.5, max_sample_gap_s=2.0
+        )
+        phone = RiskDecision(
+            "distraction", RiskState.HIGH_CANDIDATE, 1.0, ("phone_presence",), (), (), "rules"
+        )
+        head = RiskDecision(
+            "distraction", RiskState.HIGH_CANDIDATE, 1.0, ("sustained_right_turn",), (), (), "rules"
+        )
+        self.assertIs(
+            machine.update(phone, 0.0, entry_persistence_override_s=1.0).level,
+            AlertLevel.NONE,
+        )
+        self.assertIs(
+            machine.update(phone, 0.5, entry_persistence_override_s=1.0).level,
+            AlertLevel.NONE,
+        )
+        self.assertIs(
+            machine.update(phone, 1.0, entry_persistence_override_s=1.0).level,
+            AlertLevel.HIGH,
+        )
+
+        head_machine = AlertStateMachine(
+            "distraction", entry_persistence_s=1.0, max_sample_gap_s=2.0
+        )
+        self.assertIs(
+            head_machine.update(head, 0.0, entry_persistence_override_s=0.0).level,
+            AlertLevel.HIGH,
+        )
 
 
 if __name__ == "__main__":

@@ -29,28 +29,39 @@
 
 ## Quick Start
 
-You need Python 3.11–3.14, a webcam recognized by OpenCV (or a local video file), and an audio output device for audible warnings. To enable all configured full-profile detectors, download the face, hand, and phone model files described in [models/README.md](models/README.md).
+Use Python 3.11–3.14, a webcam recognized by OpenCV (or a local video), and an audio output device for audible warnings. The steps below work on supported macOS, Linux, and Windows systems; check [System requirements](#system-requirements) first.
 
-On macOS or Linux, from a terminal:
+Clone the project:
 
 ```sh
 git clone https://github.com/anantkumarc/DriveSentinel.git
 cd DriveSentinel
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e .
 ```
 
-On Windows PowerShell, use `py -3.11 -m venv .venv` and activate with `.venv\Scripts\Activate.ps1` instead of the two macOS/Linux environment commands above. Then run the two `python -m pip` commands.
-
-Download the face, hand, and phone models into `models/` by following [models/README.md](models/README.md). The face model is required to start the application; without the phone or hand model, the corresponding detector is reported as unavailable.
+Create and activate a virtual environment. Choose the commands for your system:
 
 ```sh
+# macOS or Linux
+python3.11 -m venv .venv
+source .venv/bin/activate
+```
+
+```powershell
+# Windows PowerShell
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+With the environment active, install, download the verified model files, and run:
+
+```sh
+python -m pip install --upgrade pip
+python -m pip install -e .
+drive --download-models --all
 drive
 ```
 
-This opens the full profile using camera index `0`. The editable install makes `drive` available from any terminal directory while the virtual environment is active. Press `q` in the preview to close the application.
+This downloads the required face model and optional phone and hand models for the full profile. To download only the required face model, use `drive --download-models`. Check files later with `drive --check-models`. Downloads are verified before installation, and existing files are not overwritten. The `drive` command works from any directory while the virtual environment is active. Press `q` in the preview to close the application.
 
 ## Screenshots and demo
 
@@ -157,7 +168,8 @@ The capture worker keeps a bounded, recent frame for the processing loop. Face l
 ├── models/README.md         # Model download sources and SHA-256 values
 ├── src/dms/
 │   ├── launcher.py          # Repository-aware `drive` command
-│   ├── app.py               # Integrated command-line application and preview
+│   ├── app.py               # Integrated command-line application, preview, and model commands
+│   ├── model_assets.py      # Model inventory, SHA-256 verification, and safe downloads
 │   ├── alerts/              # Alert states, notifications, and audio controller
 │   ├── capture/             # Threaded camera/video capture
 │   ├── detectors/           # Face, eyes, mouth, pose, phone, and hands
@@ -177,8 +189,10 @@ The capture worker keeps a bounded, recent frame for the processing loop. Face l
 ## System requirements
 
 - Python 3.11 or later, below 3.15, as declared in `pyproject.toml` (Python 3.11 is used in the recorded local checks).
+- The pinned MediaPipe package currently provides wheels for macOS 11+ on Apple Silicon, Windows x64/ARM64, and Linux with glibc 2.28+ on x64/ARM64. Intel Macs do not have a wheel for this pinned version. [See the available MediaPipe wheels](https://pypi.org/project/mediapipe/1.2.0/#files).
 - A webcam recognized by OpenCV, or a local video file. The default camera source is index `0`.
 - An audio output device for audible warnings.
+- On Linux, if audio cannot initialize, install PortAudio using your distribution's package manager (the package is often named `libportaudio2`). [sounddevice installation notes](https://python-sounddevice.readthedocs.io/en/latest/installation.html).
 - The face model for the main face-processing path. The full profile's phone and hand detectors also need the model files listed in [models/README.md](models/README.md).
 - The documented checks were performed in a macOS development environment. Linux and Windows have not been validated. See [environment and verification notes](docs/environment.md) for the scope and limits of those checks.
 
@@ -186,41 +200,7 @@ Lighting, camera position, occlusion, OS camera permissions, and audio-device av
 
 ## Installation
 
-### 1. Clone the repository
-
-```sh
-git clone https://github.com/anantkumarc/DriveSentinel.git
-cd DriveSentinel
-```
-
-### 2. Create and activate a virtual environment
-
-Use Python 3.11 if available. On macOS/Linux:
-
-```sh
-python3.11 -m venv .venv
-source .venv/bin/activate
-```
-
-On Windows PowerShell:
-
-```powershell
-py -3.11 -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-
-If PowerShell blocks script activation, follow your organization's PowerShell policy or activate the environment from Command Prompt with `.venv\Scripts\activate.bat`.
-
-### 3. Install the application
-
-With the virtual environment active, from the repository root:
-
-```sh
-python -m pip install --upgrade pip
-python -m pip install -e .
-```
-
-Alternatively, if you already use `uv`, install the locked dependencies and the project with:
+The Quick Start above is the recommended setup. If you already use `uv`, you can install the locked dependencies and project instead with:
 
 ```sh
 uv sync --locked
@@ -232,17 +212,7 @@ Optional packages for additional workflows can be installed with:
 python -m pip install -e ".[phone,training,resources]"
 ```
 
-### 4. Download model files
-
-Model weights are intentionally excluded from Git. Follow [models/README.md](models/README.md) to download the needed assets into `models/` and verify their SHA-256 values. The face model is needed to start the main face-processing path. Without the configured phone or hand model, those detectors are unavailable; calibrated fusion also needs the model files it references.
-
-### 5. Start the application
-
-```sh
-drive
-```
-
-The editable install adds `drive` to the active virtual environment's command path. With that environment active, the command works from any current directory, starts `configs/full.yaml` with camera source `0`, and resolves project files relative to the repository. Arguments can override the defaults.
+The application uses `drive --download-models --all` to obtain its official model files. Model weights are intentionally excluded from Git, checksummed before use, and never overwritten. See [models/README.md](models/README.md) if a download fails or you use custom models.
 
 ## Run and configure
 
@@ -297,7 +267,7 @@ Recovery angles, smoothing, detector confidence gates, phone region, fusion stra
 | Eye closure | Bilateral eye geometry feeds a timestamp-based closure tracker. The critical eye-closure path uses 1.5 seconds; the rule configuration also uses closure and PERCLOS evidence. |
 | PERCLOS | Reports the closed-eye share over a 60-second window only when at least half of that window has valid observed-time coverage. |
 | Mouth opening | A 1-second sustained opening produces a yawn-like candidate. Talking can also meet this condition; the code does not classify yawns. |
-| Phone | A detected phone whose center is inside the configured `driver_roi` can produce an immediate distraction warning in the full profile. The default region covers the full image, so presence may include a passenger or a false detection; it is not phone-use classification. |
+| Phone | A detected phone in the configured `driver_roi` can produce a distraction warning after 1 second of persistent detections in the full profile. The default region covers the full image, so presence may include a passenger or a false detection; it is not phone-use classification. |
 | Hand movement | Hand landmarks and phone/hand proximity remain diagnostic. Hand movement alone and the phone/hand association do not trigger the alarm. |
 | Audio | One continuous synthesized, band-limited square-wave tone (2.4 kHz by default) plays while an alert is active. Only one output stream runs at a time; frame-to-frame alert updates do not reopen it. Playback stops when the active alert clears or the application closes. |
 

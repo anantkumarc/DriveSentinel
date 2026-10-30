@@ -65,12 +65,17 @@ class AlertStateMachine:
         decision: RiskDecision,
         timestamp_s: float,
         *,
+        entry_persistence_override_s: float | None = None,
         recovery_persistence_override_s: float | None = None,
     ) -> AlertState:
         if not math.isfinite(timestamp_s):
             raise ValueError("alert timestamp must be finite")
         if decision.channel != self.channel:
             raise ValueError(f"expected {self.channel} decision, got {decision.channel}")
+        if entry_persistence_override_s is not None and (
+            not math.isfinite(entry_persistence_override_s) or entry_persistence_override_s < 0
+        ):
+            raise ValueError("entry persistence override must be finite and nonnegative")
         if recovery_persistence_override_s is not None and (
             not math.isfinite(recovery_persistence_override_s) or recovery_persistence_override_s < 0
         ):
@@ -124,7 +129,12 @@ class AlertStateMachine:
             # demote a current alert before a valid recovery.
             desired = self.level
         if desired > self.level:
-            if critical or self.entry_persistence_s == 0:
+            entry_persistence_s = (
+                self.entry_persistence_s
+                if entry_persistence_override_s is None
+                else entry_persistence_override_s
+            )
+            if critical or entry_persistence_s == 0:
                 notify_reason = "critical_bypass" if critical else "entry_transition"
                 notify = True
                 self._activate(desired, decision, timestamp_s)
@@ -132,7 +142,7 @@ class AlertStateMachine:
                 if self._candidate_level != desired:
                     self._candidate_level = desired
                     self._candidate_since_s = timestamp_s
-                if self._candidate_since_s is not None and timestamp_s - self._candidate_since_s >= self.entry_persistence_s:
+                if self._candidate_since_s is not None and timestamp_s - self._candidate_since_s >= entry_persistence_s:
                     notify_reason = "entry_persistence"
                     notify = True
                     self._activate(desired, decision, timestamp_s)

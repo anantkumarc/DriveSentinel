@@ -1,10 +1,33 @@
 # Model assets
 
-Model weights are not stored in Git. Download the files needed for your
-configuration into this directory and verify their SHA-256 values before use.
-The current full configuration uses the face, hand, and phone model files
-listed below. The main face, eye, mouth, and head-pose processing path requires
-the face model.
+Model weights are not stored in Git. The `drive` command includes a model
+manager that checks configured files and downloads registered model bundles
+only after verifying their pinned SHA-256 digest. Run these commands from any
+directory while the project's virtual environment is active:
+
+```sh
+drive --check-models
+drive --download-models
+drive --check-models
+```
+
+With the default `configs/full.yaml`, the face model is required; the phone and
+hand models are optional. `drive --download-models` fetches only required,
+registered bundles. To install all three official bundles for the full
+configuration, run:
+
+```sh
+drive --download-models --all
+```
+
+Select another configuration with `--config`, for example
+`drive --config configs/minimal.yaml --download-models`. All files are placed
+under this repository's `models/` directory, independent of the current
+terminal directory. The manager does not overwrite an existing file. A digest
+mismatch or interrupted transfer is reported and its partial file is removed.
+If Google's upstream `latest` alias points to new bytes, the download is
+rejected until a maintainer reviews the new model and updates the recorded
+digest.
 
 | Asset | Used by | Source |
 |---|---|---|
@@ -14,9 +37,10 @@ the face model.
 | `fusion_drowsiness.json`, `fusion_distraction.json` | Optional learned fusion | Generated from development data with `tools/fit_fusion.py`; not included or pre-trained. |
 
 The download URLs use Google's `latest` alias and may change over time. The
-hashes and retrieval date below identify the versions inspected for this
-project. A downloaded file with a different hash may be a newer model; verify
-its source and compatibility before using it.
+hashes and retrieval date below identify the versions pinned by this project.
+The manager verifies these exact values. A different hash may be a newer model,
+but it is not accepted automatically; verify its source and compatibility
+before updating the pin.
 
 SHA-256 for the model files downloaded on 30 October 2026:
 
@@ -35,7 +59,15 @@ and [Hand Landmarker guide](https://developers.google.com/edge/mediapipe/solutio
 describe the other task models. The EfficientDet-Lite0 COCO label map uses
 category 76 for `cell phone`; the adapter also matches the category name.
 
-For a fresh checkout, create this directory if needed and download only the
-models required by the selected configuration. Keep model files and any
-calibrated fusion artifacts out of public commits unless their redistribution
-terms and data provenance are clear.
+For manual installs or custom configurations, verify a file with
+`shasum -a 256 <file>` on macOS or Linux, or
+`Get-FileHash <file> -Algorithm SHA256` in PowerShell. The face model is
+required by the main pipeline. Without a configured optional phone or hand
+model, that detector is unavailable and startup continues with a warning.
+
+Custom ONNX models and calibrated fusion JSON artifacts do not have an
+approved project download URL and pinned digest, so the manager will not fetch
+them. Calibrated fusion files are generated with `tools/fit_fusion.py` from
+appropriate development data; they are not included or pre-trained. Keep model
+files and fitted artifacts out of public commits unless redistribution terms
+and data provenance are clear.
