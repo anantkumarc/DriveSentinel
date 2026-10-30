@@ -1,0 +1,43 @@
+schema_version: 1
+experiment_id: eyes_first
+
+camera:
+  source: 0
+  width: 640
+  height: 480
+  # Set to the device name shown by the operating system; OpenCV reports only an index.
+  label: null
+
+face:
+  model: models/face_landmarker.task
+  min_face_detection_confidence: 0.5
+  min_eye_width_px: 12
+
+eyes:
+  # Provisional fixtures only. Calibrate and evaluate before research claims.
+  ear_closed_threshold: 0.20
+  threshold_mode: fixed
+  personal_calibration_duration_seconds: 20.0
+  personal_calibration_closed_ratio: 0.70
+  personal_calibration_min_samples: 50
+  personal_calibration_min_open_ear: 0.12
+  personal_calibration_max_open_ear: 0.55
+  personal_calibration_max_relative_mad: 0.20
+  quality_max_relative_asymmetry: 0.40
+  critical_closure_seconds: 1.5
+  max_sample_gap_seconds: 0.25
+  capture_unavailable_after_seconds: 1.0
+
+ui:
+  show_preview: true
+
+alerts:
+  entry_persistence_seconds: 0.5
+  recovery_persistence_seconds: 1.0
+  repeat_cooldown_seconds: 8.0
+  max_sample_gap_seconds: 0.25
+  audio_enabled: true
+  buzzer_frequency_hz: 2400.0
+  buzzer_sample_rate_hz: 48000
+  buzzer_volume: 0.9
+  audio_blocksize: 512

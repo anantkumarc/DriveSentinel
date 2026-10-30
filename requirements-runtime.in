@@ -1,0 +1,5 @@
+mediapipe==1.2.0
+opencv-contrib-python>=4.13,<5
+numpy>=1.26,<3
+PyYAML>=6.0,<7
+sounddevice>=0.5,<1
