@@ -1,60 +1,145 @@
 # DriveSentinel
 
-> An AI-powered Driver Monitoring System that uses computer vision to identify signs of driver distraction and provide real-time audio warnings.
+![Python support: 3.11–3.14](https://img.shields.io/badge/Python-3.11%E2%80%933.14-3776AB?logo=python&logoColor=white)
+![Project version: 0.1.0](https://img.shields.io/badge/version-0.1.0-blue)
 
-## 1. Project overview
+**A local, modular Python prototype for exploring camera-based driver monitoring.** DriveSentinel measures visual cues related to eye closure, sustained mouth opening, head pose, and phone presence, then combines them over time to show monitoring states and provide audio warnings.
 
-DriveSentinel is a local Python prototype that processes webcam or video frames and looks for visual cues related to driver attention. It was developed to bring face, eye, mouth, and head-pose measurements into one configurable monitoring application.
+> DriveSentinel is a research and demonstration project. It has not been validated as a vehicle safety system, is not safety certified, and should not be relied on while driving.
 
-The application shows its current measurements and can play an electronic warning when configured cues persist. It is a research and demonstration project. It has not been validated as a vehicle safety system and should not be relied on while driving.
+## Navigation
 
-## 2. Features
+- [Quick Start](#quick-start)
+- [Screenshots and demo](#screenshots-and-demo)
+- [Project status](#project-status)
+- [Implemented and planned features](#what-is-implemented-and-what-is-planned)
+- [What the terms mean](#what-the-terms-mean)
+- [How it works](#how-it-works)
+- [Technology stack](#technology-stack)
+- [Project structure](#project-structure)
+- [System requirements](#system-requirements)
+- [Installation](#installation)
+- [Run and configure](#run-and-configure)
+- [Detection behavior](#detection-behavior)
+- [Testing and verification](#testing-and-verification)
+- [Privacy and run logs](#privacy-and-run-logs)
+- [Limitations and future work](#limitations-and-future-work)
+- [Contributing and documentation](#contributing-and-documentation)
+- [License](#license)
 
-Implemented features:
+## Quick Start
 
-- Camera and local-video capture through OpenCV.
-- MediaPipe face landmarks used for eye, mouth, and head-pose measurements.
-- Bilateral eye-aspect-ratio monitoring, sustained eye-closure timing, PERCLOS, and optional operator-started personal eye calibration.
-- Sustained mouth-opening candidate detection. This is not a yawn classifier.
-- Neutral-relative left/right head-turn and downward-head tracking with separate timers.
-- Phone-presence detection in the configured driver region.
-- Hand landmarks and phone/hand proximity as diagnostic information. Hand movement alone does not trigger an alarm.
-- Separate drowsiness and distraction decisions, a preview, and JSONL run logs.
-- One continuous synthesized piezo-style warning tone while an alert is active.
+You need Python 3.11–3.14, a webcam recognized by OpenCV (or a local video file), and an audio output device for audible warnings. To enable all configured full-profile detectors, download the face, hand, and phone model files described in [models/README.md](models/README.md).
 
-Planned work, not implemented as validated behavior, includes broader camera testing, measured accuracy and false-alarm rates, and evaluation with appropriately collected and labeled data.
+On macOS or Linux, from a terminal:
 
-## 3. How it works
+```sh
+git clone https://github.com/anantkumarc/DriveSentinel.git
+cd DriveSentinel
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+```
+
+On Windows PowerShell, use `py -3.11 -m venv .venv` and activate with `.venv\Scripts\Activate.ps1` instead of the two macOS/Linux environment commands above. Then run the two `python -m pip` commands.
+
+Download the face, hand, and phone models into `models/` by following [models/README.md](models/README.md). The face model is required to start the application; without the phone or hand model, the corresponding detector is reported as unavailable.
+
+```sh
+drive
+```
+
+This opens the full profile using camera index `0`. The editable install makes `drive` available from any terminal directory while the virtual environment is active. Press `q` in the preview to close the application.
+
+## Screenshots and demo
+
+No real screenshots or demo video are included in the repository yet. These placeholders are intentionally text-only; they are not sample or fabricated images.
+
+- **Screenshot placeholder — application preview:** Add a genuine capture of a verified run here when one is available.
+- **Demo placeholder — short clip:** Add a real clip from a supervised, stationary demonstration when one is available.
+
+Do not make a demonstration while driving or add private driver recordings to the repository.
+
+## Project status
+
+| Area | Current state |
+| --- | --- |
+| Application | Implemented local pipeline for camera or local-video input, visual cue processing, temporal tracking, separate drowsiness and distraction decisions, preview, metadata logs, and audio alerts. |
+| Configurations | `configs/full.yaml` enables the broader pipeline; `configs/minimal.yaml` provides an eye-first baseline. |
+| Research validation | Real-driver accuracy, false-alarm rates, and safety performance have not been established. |
+| Hardware validation | Live-camera behavior and physical buzzer playback depend on the target computer and have not been verified there. |
+| License | No license has been selected; no `LICENSE` file is included. |
+
+The Python and version badges above match the supported-version range in `pyproject.toml` and its package version. No stars, CI, or license badge is shown because the repository does not provide a verified value for those claims.
+
+## What the terms mean
+
+| Term | Beginner-friendly explanation | How DriveSentinel uses it |
+| --- | --- | --- |
+| **Eye Aspect Ratio (EAR)** | A ratio made from distances between eye landmarks. It tends to get smaller as the eyelid closes. | The application calculates a value for each eye and compares both eyes with a configurable closure threshold. EAR is a geometric cue, not a medical measurement. |
+| **PERCLOS** | “Percentage of eyelid closure over time”: the share of observed time in a rolling window during which the eyes were classified as closed. | The full profile uses a 60-second window and requires at least 50% time coverage before reporting a PERCLOS value. Missing observations are not counted as open eyes. |
+| **Head-pose estimation** | Estimating the orientation of a face in 3D, commonly described as yaw (turning left/right), pitch (looking up/down), and roll (tilting). | DriveSentinel compares the current estimated pose with a neutral pose. This is head orientation, not eye gaze or proof of distraction. |
+| **Temporal tracking** | Following measurements over time rather than deciding from one frame. | Independent timers and rolling windows use observation timestamps to track sustained eye closure, mouth opening, and head direction. Gaps and unknown observations are handled explicitly. |
+| **Detection fusion** | Combining evidence from multiple vision channels to produce a higher-level decision. | Separate drowsiness and distraction channels use configurable rule-based, weighted, or calibrated fusion. This is visual-cue fusion; the current system does not combine unrelated vehicle sensors. |
+
+## What is implemented and what is planned
+
+**Implemented in the source code:**
+
+- OpenCV capture from a camera index or local video file, with a capture worker and health monitoring.
+- MediaPipe face landmarks for bilateral eye geometry, mouth opening, and head-pose estimation.
+- Time-based eye-closure tracking and a coverage-aware PERCLOS window.
+- Optional operator-started personal eye-threshold calibration; fixed EAR remains the default.
+- Neutral-relative left/right and downward head-distraction tracking with smoothing, hysteresis, and independent configured durations.
+- Phone-presence detection within a configured image region. The signal indicates detected phone presence; it does not establish that the driver is using the phone.
+- Hand landmarks and phone/hand proximity for diagnostics. Hand movement and phone/hand association do not independently trigger the alarm.
+- Configurable rule-based and weighted fusion, plus calibrated fusion support when suitable model files are supplied.
+- Separate drowsiness and distraction alert states, a preview, JSONL metadata logs, and a continuous synthesized piezo-style warning tone.
+
+**Planned or not yet validated:**
+
+- Evaluation on appropriately collected and labeled data across drivers, cameras, lighting, and occlusion conditions.
+- Measured accuracy, false-alarm rates, warning latency, and performance targets.
+- Broader camera and platform validation, and a real screenshot/demo captured from a verified run.
+- Fitted fusion models for a particular evaluated dataset; no pretrained calibrated fusion models are included.
+
+## How it works
 
 ```mermaid
 flowchart TD
-    Camera[Camera or local video] --> Capture[OpenCV capture thread and health checks]
+    Input[Camera or local video] --> Capture[OpenCV capture thread and health checks]
     Capture --> Face[MediaPipe Face Landmarker]
-    Face --> Eyes[Eye geometry and closure timers]
-    Face --> Mouth[Mouth-opening ratio and candidate timer]
-    Face --> Pose[Head pose relative to a neutral baseline]
-    Capture --> Phone[Phone detector]
-    Capture --> Hands[Hand landmarks and diagnostic association]
-    Eyes --> Drowsy[Drowsiness evidence]
-    Mouth --> Drowsy
-    Pose --> Distract[Head-distraction evidence]
+    Face --> Eyes[Eye landmarks and EAR]
+    Eyes --> EyeTime[Closure timer and PERCLOS window]
+    EyeTime --> Drowsy[Drowsiness evidence]
+    Face --> Mouth[Mouth-opening ratio]
+    Mouth --> MouthTime[Sustained opening candidate]
+    MouthTime --> Drowsy
+    Face --> Pose[Head pose relative to neutral]
+    Pose --> HeadTime[Smoothed yaw/pitch timers]
+    HeadTime --> Distract[Distraction evidence]
+    Capture --> Phone[Phone detector and configured driver region]
     Phone --> Distract
-    Hands -. diagnostics only .-> Distract
-    Drowsy --> Fusion[Rule, weighted, or calibrated fusion]
+    Capture --> Hands[Optional hand landmarks]
+    Phone --> Assoc[Phone/hand association diagnostics]
+    Hands --> Assoc
+    Drowsy --> Fusion[Rules, weighted, or calibrated fusion]
     Distract --> Fusion
-    Fusion --> Alert[Alert state machines and time checks]
-    Alert --> Audio[Continuous synthesized buzzer]
-    Alert --> Output[Preview and metadata logs]
+    Fusion --> States[Separate alert state machines]
+    States --> Audio[Continuous synthesized buzzer]
+    States --> Outputs[Preview and JSONL metadata logs]
+    Assoc -. diagnostic output .-> Outputs
 ```
 
-The capture thread keeps a recent frame available to the processing loop. Face landmarks feed the eye, mouth, and head-pose modules. Phone detection is independent; hand landmarks are used for diagnostics and do not independently activate the buzzer. Temporal trackers apply configured durations before sustained cues reach the alert controller.
+The capture worker keeps a bounded, recent frame for the processing loop. Face landmarks feed eye, mouth, and head-pose calculations; phone detection runs independently. Hand and phone proximity is diagnostic only and is not alarm evidence. By default, the full profile warns for a phone detected in the configured driver region, even though that does not prove phone use.
 
-## 4. Technology stack
+## Technology stack
 
 | Technology | Purpose |
 | --- | --- |
 | Python | Application and analysis tools |
-| OpenCV | Camera/video capture, image conversion, and calibration |
+| OpenCV | Camera/video capture, image conversion, and camera calibration |
 | MediaPipe Tasks | Face landmarks, hand landmarks, and the default phone detector |
 | NumPy | Landmark, pose, and audio calculations |
 | PyYAML | YAML configuration files |
@@ -63,7 +148,7 @@ The capture thread keeps a recent frame available to the processing loop. Face l
 | scikit-learn and pandas (optional) | Fusion-model fitting and data workflows |
 | psutil (optional) | Process resource samples in run logs |
 
-## 5. Project structure
+## Project structure
 
 ```text
 .
@@ -71,124 +156,127 @@ The capture thread keeps a recent frame available to the processing loop. Face l
 ├── docs/                    # Validation, safety, and research templates
 ├── models/README.md         # Model download sources and SHA-256 values
 ├── src/dms/
-│   ├── launcher.py           # repository-aware drive command
-│   ├── app.py                # Integrated command-line application and preview
-│   ├── alerts/               # Alert states, notifications, and audio controller
-│   ├── capture/              # Threaded camera/video capture
-│   ├── detectors/            # Face, eyes, mouth, pose, phone, and hands
-│   ├── fusion/               # Rule, weighted, and calibrated decisions
-│   ├── health/               # Capture watchdog and channel health
-│   ├── telemetry/            # Asynchronous JSONL logging
-│   ├── temporal/             # Closure, PERCLOS, and head-direction timers
-│   └── tools/                # Camera and pose calibration commands
-├── tests/                    # unittest coverage for timing, audio, and alerts
-├── tools/                    # Smoke, replay, fitting, and evaluation utilities
-├── pyproject.toml            # Package metadata and dependencies
-├── requirements-runtime.in   # Runtime dependency input list
-├── requirements-dev.in       # Runtime plus packaging tools
-└── uv.lock                   # Locked dependency graph for uv
+│   ├── launcher.py          # Repository-aware `drive` command
+│   ├── app.py               # Integrated command-line application and preview
+│   ├── alerts/              # Alert states, notifications, and audio controller
+│   ├── capture/             # Threaded camera/video capture
+│   ├── detectors/           # Face, eyes, mouth, pose, phone, and hands
+│   ├── fusion/              # Rule, weighted, and calibrated decisions
+│   ├── health/              # Capture watchdog and channel health
+│   ├── telemetry/           # Asynchronous JSONL logging
+│   ├── temporal/            # Closure, PERCLOS, and head-direction timers
+│   └── tools/               # Camera and pose calibration commands
+├── tests/                   # Automated checks for timing, audio, and alerts
+├── tools/                   # Smoke, replay, fitting, and evaluation utilities
+├── pyproject.toml           # Package metadata and dependencies
+├── requirements-runtime.in  # Runtime dependency input list
+├── requirements-dev.in     # Runtime plus packaging tools
+└── uv.lock                 # Locked dependency graph for uv
 ```
 
-## 6. System requirements
+## System requirements
 
-- Python 3.11 or later, below 3.15, as declared in `pyproject.toml`. Python 3.11 is the version used for local validation.
+- Python 3.11 or later, below 3.15, as declared in `pyproject.toml` (Python 3.11 is used in the recorded local checks).
 - A webcam recognized by OpenCV, or a local video file. The default camera source is index `0`.
-- A working audio output device for audible warnings.
-- The face model for face, eye, mouth, and head-pose features. The full profile also uses the phone and hand model files described in [models/README.md](models/README.md).
-- The software and dependencies were checked in the current macOS development environment. Linux and Windows have not been validated. Live-camera operation and physical audio playback remain unverified on the target setup.
+- An audio output device for audible warnings.
+- The face model for the main face-processing path. The full profile's phone and hand detectors also need the model files listed in [models/README.md](models/README.md).
+- The documented checks were performed in a macOS development environment. Linux and Windows have not been validated. See [environment and verification notes](docs/environment.md) for the scope and limits of those checks.
 
-Camera permissions, lighting, camera placement, and available audio devices can affect operation. No dedicated GPU is required by the current configuration, and no performance target is claimed.
+Lighting, camera position, occlusion, OS camera permissions, and audio-device availability can affect operation. No dedicated GPU is required by the current configuration, and no performance target is claimed.
 
-## 7. Installation guide
+## Installation
 
-### Step 1: Clone the repository
+### 1. Clone the repository
 
 ```sh
 git clone https://github.com/anantkumarc/DriveSentinel.git
 cd DriveSentinel
 ```
 
-### Step 2: Create a virtual environment
+### 2. Create and activate a virtual environment
 
-Use Python 3.11 if available:
+Use Python 3.11 if available. On macOS/Linux:
 
 ```sh
 python3.11 -m venv .venv
-```
-
-### Step 3: Activate it
-
-macOS/Linux:
-
-```sh
 source .venv/bin/activate
 ```
 
-Windows PowerShell:
+On Windows PowerShell:
 
 ```powershell
+py -3.11 -m venv .venv
 .venv\Scripts\Activate.ps1
 ```
 
-### Step 4: Install dependencies
+If PowerShell blocks script activation, follow your organization's PowerShell policy or activate the environment from Command Prompt with `.venv\Scripts\activate.bat`.
 
-The project uses `pyproject.toml` as its package manifest:
+### 3. Install the application
+
+With the virtual environment active, from the repository root:
 
 ```sh
 python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
-Alternatively, with `uv` installed, use the committed lock file:
+Alternatively, if you already use `uv`, install the locked dependencies and the project with:
 
 ```sh
 uv sync --locked
 ```
 
-Optional packages can be installed for additional workflows:
+Optional packages for additional workflows can be installed with:
 
 ```sh
 python -m pip install -e ".[phone,training,resources]"
 ```
 
-### Step 5: Obtain model files
+### 4. Download model files
 
-Download the model assets into `models/` using the sources and SHA-256 checks in [models/README.md](models/README.md). Model weights are intentionally excluded from Git; the face model is needed for the main face-processing path, while the phone and hand files enable those detectors in the full profile.
+Model weights are intentionally excluded from Git. Follow [models/README.md](models/README.md) to download the needed assets into `models/` and verify their SHA-256 values. The face model is needed to start the main face-processing path. Without the configured phone or hand model, those detectors are unavailable; calibrated fusion also needs the model files it references.
 
-### Step 6: Run the application
+### 5. Start the application
 
 ```sh
 drive
 ```
 
-The editable installation adds `drive` to the active virtual environment's
-command path. Activate that environment in a terminal, then `drive` can be
-run from any working directory. It starts the full configuration with camera
-source `0` and resolves project files relative to the cloned repository.
-Optional command-line arguments can override the defaults.
+The editable install adds `drive` to the active virtual environment's command path. With that environment active, the command works from any current directory, starts `configs/full.yaml` with camera source `0`, and resolves project files relative to the repository. Arguments can override the defaults.
 
-To use a local video instead of a camera:
+## Run and configure
+
+To use a local video file instead of a camera:
 
 ```sh
 drive --source path/to/video.mp4 --headless
 ```
 
-Press `q` in the preview to stop. Runs create a new directory under `runs/` with `manifest.json` and `observations.jsonl`; these local outputs are ignored by Git. On macOS, grant camera access to the terminal or application that starts the program.
+To select the eye-first configuration:
 
-## 8. Configuration
+```sh
+drive --config configs/minimal.yaml
+```
 
-The application defaults to `configs/full.yaml`. `configs/minimal.yaml` provides an eye-first baseline. Pass `--config` to select a configuration; `--source` can override its camera source.
+Press `q` in the preview to stop a windowed run. Each successful run creates a new directory under `runs/` with `manifest.json` and `observations.jsonl`; local run outputs are ignored by Git. On macOS, grant camera access to the terminal or application that starts the program. Use `drive --help` to see the command-line options.
 
-| Setting | Full-profile default | Meaning |
+The application defaults to `configs/full.yaml`. `configs/minimal.yaml` provides an eye-first baseline. The `--config` argument selects a configuration, and `--source` overrides its camera source. The current source options are a camera index or a local video file; network stream URLs are not currently supported.
+
+### Selected full-profile settings
+
+Values below come from `configs/full.yaml`. They are configurable engineering starting points, not validated safety limits.
+
+| Setting | Default | Meaning |
 | --- | ---: | --- |
-| `camera.source` | `0` | OpenCV camera index; a local video path can also be supplied on the command line |
-| `camera.width`, `camera.height` | `640`, `480` | Requested capture size |
-| `eyes.ear_closed_threshold` | `0.20` | Fixed eye-aspect-ratio closure threshold |
-| `eyes.critical_closure_seconds` | `1.5` | Sustained closure time for the critical eye-closure path |
-| `eyes.perclos_window_seconds` | `60.0` | PERCLOS observation window |
+| `camera.source` | `0` | OpenCV camera index; `--source` can use a local video path |
+| `camera.width`, `camera.height` | `640`, `480` | Requested capture dimensions |
+| `eyes.ear_closed_threshold` | `0.20` | Fixed EAR closure threshold |
+| `eyes.critical_closure_seconds` | `1.5` | Sustained eye-closure duration for the critical path |
+| `eyes.perclos_window_seconds` | `60.0` | PERCLOS rolling-window duration |
+| `eyes.perclos_min_coverage` | `0.5` | Minimum observed-time coverage before PERCLOS is valid |
 | `mouth.open_ratio_threshold` | `0.55` | Mouth-opening ratio for an open observation |
 | `mouth.candidate_after_seconds` | `1.0` | Sustained opening time before a candidate is emitted |
-| `head_distraction.left_yaw_threshold_deg`, `right_yaw_threshold_deg` | `15.0` | Head-turn activation angles |
+| `head_distraction.left_yaw_threshold_deg`, `right_yaw_threshold_deg` | `15.0` | Left/right head-turn activation angles |
 | `head_distraction.head_turn_threshold_seconds` | `5.0` | Sustained left/right turn duration |
 | `head_distraction.downward_pitch_threshold_deg` | `18.0` | Downward-pose activation angle |
 | `head_distraction.downward_head_threshold_seconds` | `3.0` | Sustained downward-pose duration |
@@ -197,69 +285,75 @@ The application defaults to `configs/full.yaml`. `configs/minimal.yaml` provides
 | `alerts.buzzer_sample_rate_hz` | `48000` | Audio sample rate |
 | `alerts.buzzer_volume` | `0.9` | Waveform amplitude setting |
 
-Recovery angles, smoothing, detector confidence gates, phone ROI, fusion strategy, alert persistence, and other values are also configurable in the YAML files. Thresholds are engineering starting points, not validated safety limits.
+Recovery angles, smoothing, detector confidence gates, phone region, fusion strategy, alert persistence, and other values are also configurable in the YAML files.
 
-## 9. Detection behaviour
+## Detection behavior
 
-| Cue | Implemented behavior |
+| Cue | Implemented behavior in the full profile |
 | --- | --- |
-| Forward head position | No head-direction warning while relative yaw and pitch remain within the configured range. A stable neutral baseline is enrolled at startup. |
-| Left or right turn | Starts a separate turn timer after the corresponding yaw angle is crossed. The full profile alerts after more than 5 seconds. |
-| Looking downward | Starts a down timer after the configured pitch angle is crossed. The full profile alerts after 3 seconds. Looking up uses the opposite pitch sign and is not a down cue. |
-| Eye closure | Uses both eyes’ landmark geometry and a time-based closure tracker. The full profile has a 1.5-second critical-closure path. |
+| Forward head position | No head-direction warning while relative yaw and pitch remain inside their configured activation ranges. A stable neutral pose is enrolled at startup unless a neutral reference is supplied. |
+| Left or right turn | Independent yaw timers use a 5-second configured duration. Smoothing and lower recovery angles help reduce frame noise and clear the cue after return toward neutral. |
+| Looking downward | A downward-pitch timer uses a 3-second configured duration. The configured pitch sign distinguishes looking down from looking up. |
+| Eye closure | Bilateral eye geometry feeds a timestamp-based closure tracker. The critical eye-closure path uses 1.5 seconds; the rule configuration also uses closure and PERCLOS evidence. |
+| PERCLOS | Reports the closed-eye share over a 60-second window only when at least half of that window has valid observed-time coverage. |
 | Mouth opening | A 1-second sustained opening produces a yawn-like candidate. Talking can also meet this condition; the code does not classify yawns. |
-| Phone | The full profile warns when a phone is detected in the configured driver region. This is phone-presence detection, not proof that the driver is using it. |
-| Hand movement | Hand landmarks and association remain diagnostic; hand movement alone is not alarm evidence. |
-| Audio | One synthesized, continuous 2.4 kHz piezo-style tone plays while an alert is active and stops when the alert clears. It uses the system’s selected audio output. |
+| Phone | A detected phone whose center is inside the configured `driver_roi` can produce an immediate distraction warning in the full profile. The default region covers the full image, so presence may include a passenger or a false detection; it is not phone-use classification. |
+| Hand movement | Hand landmarks and phone/hand proximity remain diagnostic. Hand movement alone and the phone/hand association do not trigger the alarm. |
+| Audio | One continuous synthesized, band-limited square-wave tone (2.4 kHz by default) plays while an alert is active. Only one output stream runs at a time; frame-to-frame alert updates do not reopen it. Playback stops when the active alert clears or the application closes. |
 
-## 10. Testing
+The minimal configuration is an eye-first baseline; it does not configure mouth, pose, phone, hand, learned-fusion, or audio channels. The full configuration enables the broader pipeline described above. The phone/hand association flag is not marked validated by default and is excluded from alarm evidence.
 
-Run the automated tests from the repository root:
+## Testing and verification
+
+Run the automated checks from the repository root:
 
 ```sh
 python -m unittest discover -s tests
 ```
 
-The local Python 3.11 run completed with all 30 tests passing.
-
-Check imports and configured model loading with:
+Check imports and configured face-model loading with:
 
 ```sh
 python tools/smoke.py --config configs/full.yaml --require-model
 ```
 
-For manual checks, use a stationary camera and follow [the head-distraction validation procedure](docs/head-distraction-validation.md). Do not perform tests while driving. Automated timing tests do not establish real-camera detection accuracy, physical alert latency, or safety performance.
+The smoke check requires the face model described in [models/README.md](models/README.md). For manual head-direction checks, follow [the head-distraction validation procedure](docs/head-distraction-validation.md) with a stationary camera. Do not perform movement tests while driving. Automated checks do not establish real-camera detection accuracy, physical alert latency, or safety performance. See [environment and verification notes](docs/environment.md) for the recorded verification scope.
 
-## 11. Limitations
+## Privacy and run logs
 
-- Camera quality, lighting, occlusion, camera position, and face angle affect landmark quality and pose estimates.
-- The neutral-pose baseline and direction signs need checking with the intended camera placement.
-- A detected phone in a broad region can belong to a passenger or be a false detection. Phone presence is not phone-use classification.
+The default configuration does not save raw video, audio recordings, facial landmarks, or phone boxes. Run logs contain derived measurements, event and alert states, configuration and asset metadata, and capture/processing metadata. Treat run directories as potentially sensitive, review the privacy settings before collecting data, and do not commit private recordings, run logs, calibration files, credentials, or downloaded model weights.
+
+## Limitations and future work
+
+- Lighting, camera quality and placement, head angle, glasses, occlusion, and detector quality can affect landmark and pose estimates.
+- The neutral-pose baseline and direction signs should be checked with the intended camera placement.
+- A phone detected in a broad region can belong to a passenger or be a false detection. Phone presence is not phone-use classification.
 - Mouth opening can occur during speech and is not a yawn classifier.
 - No real-driver accuracy, false-alarm rate, throughput, or physical warning-latency result has been established.
 - This prototype is not certified vehicle-safety equipment and is not a replacement for attentive driving or qualified safety systems.
 
-## 12. Future improvements
+Possible future work includes guided camera and neutral-pose setup, evaluation across more camera placements and lighting conditions, documented performance measurements, and privacy-reviewed collection of labeled data. These are plans, not completed capabilities.
 
-Possible future work includes a guided camera and neutral-pose setup, evaluation across more camera placements and lighting conditions, documented performance measurements, and privacy-reviewed collection of labeled data. These are plans, not completed capabilities.
-
-## 13. Contributing
+## Contributing and documentation
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development and pull-request workflow. Changes to detection behavior should include tests and explain the thresholds or evidence used. Do not add private recordings, face images, credentials, or downloaded model weights to a pull request.
 
-## 14. License
-
-**No license has been selected for DriveSentinel.** No `LICENSE` file is included. Please choose a license before enabling reuse or redistribution under an open-source license.
-
-## 15. Author
-
-**Ananth Kumar A C**<br>
-GitHub: [@anantkumarc](https://github.com/anantkumarc)
-
-## 16. Additional documentation
+Additional project documentation:
 
 - [Environment and verification notes](docs/environment.md)
 - [Model sources and checksums](models/README.md)
 - [Head-distraction validation](docs/head-distraction-validation.md)
 - [Safe pilot protocol](docs/safe-pilot-protocol.md)
 - [Analysis plan template](docs/analysis-plan-template.md)
+- [Project build status](BUILD_STATUS.md)
+- [Research handover](drowsiness.md)
+
+## License
+
+**No license has been selected for DriveSentinel.** No `LICENSE` file is included. Please choose a license before enabling reuse or redistribution under an open-source license.
+
+## Author
+
+**Ananth Kumar A C**
+
+GitHub: [@anantkumarc](https://github.com/anantkumarc)
