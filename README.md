@@ -29,46 +29,47 @@
 
 ## Quick Start
 
-Install [Python 3.11](https://www.python.org/downloads/) and [Git](https://git-scm.com/downloads), and have a webcam and audio output available. The documented setup targets Apple Silicon macOS and Windows x64; Windows has not yet been tested by this project. Intel Macs are not supported by the current MediaPipe pin. See [System requirements](#system-requirements).
+### Windows: phone camera and ESP32 buzzer
 
-Clone the project:
+**You need:** a Windows x64 laptop, [Python 3.11](https://www.python.org/downloads/), [Git](https://git-scm.com/downloads), internet for setup, an Android phone with IP Webcam, and the programmed ESP32 buzzer. Windows installation and hardware have not yet been verified by this project.
+
+**1. Install once.** Open **Command Prompt** and run:
+
+```bat
+git clone https://github.com/anantkumarc/DriveSentinel.git
+cd DriveSentinel
+py -3.11 setup_drive.py
+```
+
+Wait until you see `Setup complete`. This installs the project and Bluetooth support and downloads the models. If interrupted, run `py -3.11 setup_drive.py` again.
+
+**2. Prepare the phone and ESP32.** Turn on the phone's hotspot and connect the laptop to it. Open IP Webcam on the phone and tap **Start server**. Power on the ESP32 with the [buzzer firmware already uploaded](docs/esp32-ble-buzzer.md), and enable Bluetooth on the laptop.
+
+**3. Start DriveSentinel.** In the same Command Prompt, run:
+
+```bat
+.venv\Scripts\drive.exe wifi --ble
+```
+
+The first time, enter the address shown by IP Webcam, for example `http://192.168.1.1:8080`. It will be saved on that laptop. Look forward and keep the phone still for a few seconds for head calibration. Press **Q** to quit. Test with the vehicle stationary.
+
+**Next time:** open Command Prompt in the `DriveSentinel` folder and run `.venv\Scripts\drive.exe wifi --ble` again. If the phone address changes, provide the new one: `.venv\Scripts\drive.exe wifi http://NEW_ADDRESS:8080 --ble`.
+
+### macOS: installation
+
+Install [Python 3.11](https://www.python.org/downloads/) and [Git](https://git-scm.com/downloads), then run:
 
 ```sh
 git clone https://github.com/anantkumarc/DriveSentinel.git
 cd DriveSentinel
-```
-
-Run setup once. It creates a virtual environment, installs the application and BLE support, and downloads the model files. An internet connection is required for setup.
-
-```sh
-# macOS or Linux: use a Python version from 3.11 through 3.14
-python3 setup_drive.py
-```
-
-```powershell
-# Windows PowerShell: use a Python version from 3.11 through 3.14
-py -3 setup_drive.py
-```
-
-If that command selects an older Python, use `python3.11 setup_drive.py` on macOS/Linux or `py -3.11 setup_drive.py` on Windows after installing Python 3.11.
-
-After setup, activate the environment and start the application:
-
-```sh
-# macOS or Linux
+python3.11 setup_drive.py
 source .venv/bin/activate
-drive
+drive wifi --ble
 ```
 
-```powershell
-# Windows PowerShell
-.venv\Scripts\Activate.ps1
-drive
-```
+Start the phone server and power the ESP32 as described above. For the laptop's own webcam and sound, run `drive` instead. The documented macOS setup targets Apple Silicon; Intel Macs lack a compatible wheel for the current MediaPipe pin. See [System requirements](#system-requirements).
 
-If PowerShell blocks activation, use Command Prompt with `.venv\Scripts\activate.bat`, then run `drive`. Once activated, `drive` works from any directory. Press `q` to close the preview. For the phone camera and ESP32 buzzer, use `drive wifi --ble`; see the [BLE guide](docs/esp32-ble-buzzer.md).
-
-Setup verifies downloads and does not overwrite existing models. Re-run it if a download is interrupted. Use `drive --check-models` to check models later.
+Setup verifies downloads and does not overwrite existing models. Use `drive --check-models` after activating the environment to check them later.
 
 ## Screenshots and demo
 
