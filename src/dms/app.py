@@ -478,6 +478,9 @@ def _init_optional_detectors(
     return mouth, mouth_tracker, pose, phone, hands, interaction, assets, status
 
 
+_HUD: dict[str, bool] = {"details": False}
+
+
 def _overlay(
     cv2: Any,
     image: Any,
@@ -534,10 +537,41 @@ def _overlay(
         f"Distraction reason: {', '.join(distraction_alert.reasons or head_distraction.active_reasons) or 'none'}",
         f"Risk: {max(drowsiness_alert.level, distraction_alert.level).name.upper()} | audio: {audio_status} / {audio_playback_state.value}",
     ]
-    panel_height = min(view.shape[0] - 1, 18 + 22 * len(lines))
-    cv2.rectangle(view, (0, 0), (min(width - 1, 1200), min(view.shape[0] - 1, panel_height)), (20, 24, 30), -1)
-    for index, line in enumerate(lines):
-        cv2.putText(view, line, (14, 24 + index * 22), cv2.FONT_HERSHEY_SIMPLEX, 0.48, color, 1, cv2.LINE_AA)
+    if _HUD["details"]:
+        panel_height = min(view.shape[0] - 1, 18 + 22 * len(lines))
+        cv2.rectangle(view, (0, 0), (min(width - 1, 1200), min(view.shape[0] - 1, panel_height)), (20, 24, 30), -1)
+        for index, line in enumerate(lines):
+            cv2.putText(view, line, (14, 24 + index * 22), cv2.FONT_HERSHEY_SIMPLEX, 0.48, color, 1, cv2.LINE_AA)
+    else:
+        worst = max(drowsiness_alert.level, distraction_alert.level)
+        if capture_health != "available" or eye.state is EyeState.UNKNOWN:
+            state_name, state_color = "GRAY  MONITORING UNAVAILABLE", (150, 150, 150)
+        elif worst >= AlertLevel.HIGH:
+            state_name, state_color = "RED  WARNING", (0, 0, 255)
+        elif worst is AlertLevel.ELEVATED:
+            state_name, state_color = "YELLOW  VALIDATING", (0, 215, 255)
+        else:
+            state_name, state_color = "GREEN  NORMAL MONITORING", (0, 200, 0)
+        reasons = ", ".join(distraction_alert.reasons or head_distraction.active_reasons)
+        phone_text = "PRESENT" if interaction.phone_present_in_roi else ("none" if interaction.phone_presence_valid else "unknown")
+        summary = (
+            f"EAR {_fmt(eye.ear, 2)} | closed {_fmt(closure.observed_duration_s, 1)}s | "
+            f"PERCLOS {_fmt(perclos.perclos, 2)} | head {head_distraction.direction.value.upper()} | phone {phone_text}"
+        )
+        if reasons:
+            summary += f" | {reasons}"
+        overlay = view.copy()
+        cv2.rectangle(overlay, (0, 0), (width - 1, 50), (20, 24, 30), -1)
+        cv2.rectangle(overlay, (0, view.shape[0] - 24), (width - 1, view.shape[0] - 1), (20, 24, 30), -1)
+        view = cv2.addWeighted(overlay, 0.65, view, 0.35, 0)
+        cv2.circle(view, (18, 17), 8, state_color, -1)
+        cv2.putText(view, state_name, (36, 23), cv2.FONT_HERSHEY_SIMPLEX, 0.6, state_color, 2, cv2.LINE_AA)
+        cv2.putText(view, summary, (12, 43), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (235, 235, 235), 1, cv2.LINE_AA)
+        cv2.putText(
+            view,
+            "C calibrate eyes | N head baseline | D details | Q quit | research prototype, not safety certified",
+            (10, view.shape[0] - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1, cv2.LINE_AA,
+        )
     if drowsiness_alert.level >= AlertLevel.HIGH:
         cv2.rectangle(view, (0, 0), (width - 1, view.shape[0] - 1), (0, 0, 255), 5)
     return view
@@ -980,6 +1014,8 @@ def _run(args: argparse.Namespace) -> int:
                         key = cv2.waitKey(1) & 0xFF
                         if key == ord("q"):
                             break
+                        if key in {ord("d"), ord("D")}:
+                            _HUD["details"] = not _HUD["details"]
                         if key in {ord("c"), ord("C")}:
                             current_eye_calibration = _start_eye_calibration(
                                 eye_calibrator, logger, run_time_s, eye_threshold_mode
@@ -1318,6 +1354,8 @@ def _run(args: argparse.Namespace) -> int:
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord("q"):
                     break
+                if key in {ord("d"), ord("D")}:
+                    _HUD["details"] = not _HUD["details"]
                 if key in {ord("c"), ord("C")}:
                     current_eye_calibration = _start_eye_calibration(
                         eye_calibrator, logger, run_time_s, eye_threshold_mode
