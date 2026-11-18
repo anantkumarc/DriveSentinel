@@ -1,174 +1,164 @@
 # DriveSentinel
 
-Camera-based driver-monitoring **research prototype**. It reads a camera feed, measures eye closure, head direction and other cues, and sounds a warning on an ESP32 buzzer (over Bluetooth) or on the laptop speakers.
+![Python 3.11–3.14](https://img.shields.io/badge/Python-3.11%E2%80%933.14-3776AB?logo=python&logoColor=white)
+![Version 0.1.0](https://img.shields.io/badge/version-0.1.0-blue)
 
-> Not a certified vehicle safety system. Thresholds are configurable starting values, not validated safety limits.
+**A local driver-monitoring research prototype** that uses a camera to track visual cues related to drowsiness and distraction, then provides configurable warnings.
 
-```text
-Android phone (IP Webcam)  --Wi-Fi-->  Laptop (DriveSentinel)  --BLE-->  ESP32-C3 + buzzer
+> **Research use only.** DriveSentinel is not a certified vehicle safety system and must not be relied on while driving. Perform demonstrations and tests while the vehicle is stationary.
+
+## Overview
+
+Drivers may not notice prolonged eye closure or that their head has turned away from the road. DriveSentinel processes camera frames and tracks these cues over time. It can show a preview and sound an alert through the laptop or an optional ESP32-connected buzzer.
+
+```mermaid
+flowchart LR
+    Phone[Phone camera] -->|Local Wi-Fi stream| Laptop[Mac or Windows laptop\nDriveSentinel]
+    Laptop -->|Bluetooth Low Energy| ESP[ESP32-C3]
+    ESP --> Buzzer[Active buzzer]
+    Laptop --> Preview[Monitoring preview]
 ```
 
-| Platform | Status |
-|---|---|
-| Windows x64 | Documented target (end-to-end install not yet tested) |
-| macOS Apple Silicon | Clean installation and headless sample-video run tested |
-| macOS Intel | Not supported (no MediaPipe wheel) |
-| Linux | Untested |
+The phone camera and ESP32 are optional: a laptop webcam and laptop audio can also be used. The current firmware controls a buzzer; physical warning LEDs are a possible future addition.
 
-Python must be **64-bit, version 3.11 to 3.14**. Internet is needed during setup. Windows ARM64 is not validated with the complete dependency set.
+## Features
 
----
+| Feature | Current behavior |
+| --- | --- |
+| Eyes | Measures eye landmarks, tracks closure and calculates PERCLOS when sufficient observations are available. |
+| Head position | Tracks sustained left, right and downward head movements relative to a neutral position. |
+| Mouth | Reports sustained mouth opening as a candidate; it does not confirm yawning. |
+| Phone | Detects phone presence in a configured image region; it does not establish phone use. |
+| Alerts | Combines available cues into drowsiness and distraction states. Supports laptop audio or an optional ESP32 BLE buzzer. |
+| Hand tracking | Provides diagnostics; hand movement alone does not trigger an alarm. |
 
-## Before running (after installation)
+Detection accuracy, false-alarm rates and physical warning latency have not been established. Windows and ESP32 hardware behavior have not been fully validated by this project.
 
-1. Install **IP Webcam** from the Google Play Store on the Android phone.
-2. Turn on the phone **hotspot** and connect the laptop to it.
-3. Open IP Webcam and tap **Start server**. Note the complete address it shows, including the port (for example `http://192.168.43.1:8080`). Use it as `PHONE_ADDRESS` below.
-4. Power on the programmed ESP32 and enable **Bluetooth** on the laptop.
+## Installation
 
----
+**Prerequisites:** [Python 3.11](https://www.python.org/downloads/), [Git](https://git-scm.com/downloads), and internet access for the initial setup. The recommended targets are Apple Silicon macOS 13+ and Windows x64. Intel Macs do not have a compatible wheel for the pinned MediaPipe version; Windows ARM64 and Windows hardware have not been validated.
 
-## Complete commands, first to last
+### macOS
 
-First install and set up the project while the laptop has internet access. Then follow **Before running** above and use the run command, replacing `PHONE_ADDRESS` with the complete address shown by IP Webcam.
-
-### Windows (Command Prompt)
-
-```bat
-:: 1. Install tools (Arduino IDE is optional if the ESP32 is already programmed)
-winget install -e --id Python.Python.3.11 --architecture x64
-winget install -e --id Git.Git
-```
-
-If you need to program the ESP32, install Arduino IDE separately with `winget install -e --id ArduinoSA.IDE.stable`.
-
-Close and reopen Command Prompt. Then check Python and install the project:
-
-```bat
-py -3 --version
-
-:: 2. Download and set up the project (wait for "Setup complete")
-git clone https://github.com/anantkumarc/DriveSentinel.git
-cd DriveSentinel
-py -3 setup_drive.py
-```
-
-After setup completes, start the phone server and power the ESP32 as described above. From the project folder, run:
-
-```bat
-.venv\Scripts\drive.exe wifi PHONE_ADDRESS --ble
-```
-
-### macOS (Terminal, Apple Silicon)
+In Terminal, install once:
 
 ```bash
-# 1. Install Homebrew (skip if "brew --version" already works)
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-```
-
-Follow the Homebrew installer’s displayed shell setup instructions before continuing. Then install the tools and project:
-
-```bash
-brew install python@3.11 git
-
-# Download and set up the project (wait for "Setup complete")
 git clone https://github.com/anantkumarc/DriveSentinel.git
 cd DriveSentinel
 python3.11 setup_drive.py
 ```
 
-After setup completes, start the phone server and power the ESP32 as described above. From the project folder, run:
+To start the phone camera and ESP32 buzzer:
 
 ```bash
 source .venv/bin/activate
-drive wifi PHONE_ADDRESS --ble
+drive wifi --ble
 ```
 
-### Linux (Ubuntu/Debian, untested)
+### Windows
 
-```bash
-# 1. Install tools
-sudo apt update
-sudo apt install -y git python3 python3-venv python3-pip portaudio19-dev
+In **Command Prompt**, install once:
 
-# 2. Download and set up the project (wait for "Setup complete")
+```bat
 git clone https://github.com/anantkumarc/DriveSentinel.git
 cd DriveSentinel
-python3 setup_drive.py
+py -3.11 setup_drive.py
 ```
 
-After setup completes, start the phone server and power the ESP32 as described above. From the project folder, run:
+To start the phone camera and ESP32 buzzer:
+
+```bat
+.venv\Scripts\drive.exe wifi --ble
+```
+
+Setup creates a virtual environment, installs the app and BLE support, and downloads verified model files. Wait for `Setup complete`. If a download fails, check your internet connection and run the setup command again.
+
+## Run and configure
+
+For the phone-and-ESP32 setup:
+
+1. Enable the phone's hotspot and connect the laptop to it.
+2. Open IP Webcam on the phone and start its server.
+3. Power on the ESP32 with the [buzzer firmware](docs/esp32-ble-buzzer.md) uploaded, and enable Bluetooth on the laptop.
+4. Run the platform's `wifi --ble` command above. Enter the address displayed on the phone when prompted; it is saved locally for next time.
+5. Keep the camera still and look forward for a few seconds so the app can establish a neutral head position. Press **Q** to quit.
+
+If the phone's address changes, provide the new address once with `drive wifi http://PHONE_ADDRESS:8080 --ble` (on Windows, use `.venv\Scripts\drive.exe` in place of `drive`). For the laptop webcam and audio, activate the environment and run `drive` without `wifi --ble`.
+
+The full profile is [configs/full.yaml](configs/full.yaml). Its provisional defaults include **3 seconds** for sustained sideways or downward head movement, **1.5 seconds** for the critical eye-closure path, and **1 second** of phone-presence confirmation. These are configurable starting points, not validated safety limits. [configs/minimal.yaml](configs/minimal.yaml) provides an eye-first baseline.
+
+Press **F** for fullscreen, **D** for detailed monitoring, **N** to reset the head baseline, or **Q** to quit. Laptop audio is disabled in BLE mode; check the preview and terminal for BLE connection status. See the [ESP32 wiring and setup guide](docs/esp32-ble-buzzer.md) before connecting a buzzer.
+
+## How it works
+
+```mermaid
+flowchart TD
+    Frame[Camera frame] --> Face[Face landmarks]
+    Face --> Eyes[Eye closure and PERCLOS]
+    Face --> Mouth[Mouth opening]
+    Face --> Head[Head orientation]
+    Frame --> Phone[Phone-presence detector]
+    Eyes --> Time[Track observations over time]
+    Mouth --> Time
+    Head --> Time
+    Phone --> Time
+    Time --> Fusion[Combine available evidence]
+    Fusion --> Alert[Alert states]
+    Alert --> Output[Preview and audio or BLE buzzer]
+```
+
+| Term | Meaning in this project |
+| --- | --- |
+| **Eye Aspect Ratio (EAR)** | A ratio of distances between eye landmarks; it tends to decrease when an eye closes. |
+| **PERCLOS** | The proportion of observed time classified as closed eyes within a rolling window. The full profile uses 60 seconds with a minimum coverage requirement. |
+| **Head-pose estimation** | Estimates head orientation—turning, looking up/down and tilting—relative to a neutral reference. It is not eye-gaze detection. |
+| **Temporal tracking** | Uses timestamps to determine whether a cue persists, rather than deciding from a single frame. |
+| **Alert fusion** | Combines visual evidence using configurable rules, weights or supplied calibrated models. |
+| **BLE warning** | The laptop sends standard Bluetooth Immediate Alert levels to the ESP32. The firmware switches the buzzer and has a timeout if updates stop. |
+
+## Screenshots and demo
+
+No genuine screenshots or demo video are included yet. Add a real, privacy-reviewed preview image or stationary demonstration here when available.
+
+## Project structure
+
+```text
+configs/                  Monitoring and alert settings
+docs/                     Hardware, validation and research guides
+firmware/                 ESP32-C3 Arduino sketch
+models/README.md          Model sources and checksums
+src/dms/                  Capture, detection, alerts and BLE integration
+tests/                    Automated checks
+tools/                    Calibration and research utilities
+setup_drive.py            Installation script
+```
+
+## Testing and documentation
+
+With the virtual environment active, run:
 
 ```bash
-source .venv/bin/activate
-drive wifi PHONE_ADDRESS --ble
+python -m unittest discover -s tests
 ```
 
-`setup_drive.py` creates the virtual environment, installs the application dependencies and BLE support, and downloads the SHA-256-verified model files. Python 3.11–3.14 is supported; if `py -3` selects another version, use a supported interpreter explicitly, for example `py -3.12 setup_drive.py`.
+Automated checks do not establish real-camera accuracy or physical buzzer performance. See:
 
-**Later runs:** skip the install and setup steps. Open a terminal in the `DriveSentinel` folder and use only the final run command (on macOS/Linux, `source .venv/bin/activate` first, once per new terminal).
+- [Advanced usage and detection details](docs/advanced-usage.md)
+- [ESP32 BLE buzzer setup and wiring](docs/esp32-ble-buzzer.md)
+- [Head-distraction validation](docs/head-distraction-validation.md)
+- [Environment and verification notes](docs/environment.md)
+- [Model downloads and checksums](models/README.md)
+- [Safe pilot protocol](docs/safe-pilot-protocol.md)
+- [Contributing](CONTRIBUTING.md)
 
-**Arduino IDE** is only for the one-time ESP32 programming (macOS: `brew install --cask arduino-ide`; Linux: download from arduino.cc). It is not needed on a laptop if the ESP32 is already programmed.
+## Limitations and privacy
 
----
+Lighting, occlusion, camera placement and individual differences can affect detection. The default phone region covers the full image, so a detected phone may belong to a passenger or be a false detection. Validate camera placement and head-direction signs on the intended setup. The project does not save raw video, audio or landmark coordinates by default, but run logs contain derived monitoring data and should be treated as sensitive.
 
-## Other run modes
+This is a prototype; it is not a replacement for attentive driving or a validated safety system. Broader hardware testing and evaluation across people and conditions remain future work.
 
-| Goal | Windows | macOS / Linux |
-|---|---|---|
-| Phone over Wi-Fi + ESP32 buzzer | `.venv\Scripts\drive.exe wifi PHONE_ADDRESS --ble` | `drive wifi PHONE_ADDRESS --ble` |
-| Phone over Wi-Fi, laptop sound | `.venv\Scripts\drive.exe wifi PHONE_ADDRESS` | `drive wifi PHONE_ADDRESS` |
-| Laptop webcam, laptop sound | `.venv\Scripts\drive.exe` | `drive` |
-| Phone seen as USB webcam | `.venv\Scripts\drive.exe usb` | `drive usb` |
+## Author and license
 
-The phone address is saved on that laptop. If it changes, run the command again with the new one. With `--ble`, laptop sound is **off**; alerts use the ESP32 buzzer when it is connected and working. If BLE is unavailable, there is no laptop audio fallback. If the stream drops, DriveSentinel tries to reconnect.
+**Ananth Kumar A C** · [GitHub](https://github.com/anantkumarc)
 
----
-
-## ESP32 buzzer
-
-Program the ESP32-C3 once with the supplied Arduino sketch. Wire the buzzer using the [ESP32 wiring guide](docs/esp32-ble-buzzer.md) and check your buzzer's specifications first. The ESP32 uses the standard Bluetooth Immediate Alert Service, and its firmware turns the buzzer off if updates stop.
-
----
-
-## Keys
-
-| Key | Action |
-|---|---|
-| **F** | Fullscreen |
-| **D** | Details |
-| **N** | Reset head baseline (sit normally first) |
-| **Q** | Quit |
-
----
-
-## Default thresholds
-
-| Cue | Value |
-|---|---|
-| Sustained head turn left / right / down | 3 seconds |
-| Critical eye closure | 1.5 seconds |
-| Phone presence | 1 second |
-
-Configurable in the project YAML files. Head pose measures head direction, not eye gaze. Mouth opening is a candidate cue, not confirmed yawning. Phone detection means a phone is in the image region, not that it is being used. Hand movement alone never triggers the alarm.
-
----
-
-## Quick fixes
-
-| Problem | Fix |
-|---|---|
-| `py` not found | Reopen Command Prompt after installing Python |
-| Wrong Python version | Need 64-bit 3.11 to 3.14 |
-| Stream will not connect | Same hotspot/Wi-Fi, IP Webcam server running, address correct |
-| ESP32 not found | Power it on, enable laptop Bluetooth, keep it close |
-| No laptop sound | Expected with `--ble` |
-
----
-
-## Status
-
-**Verified:** clean install on Apple Silicon Mac, headless sample-video run, 66 automated tests passed, ESP32 BLE connection seen in a previous log.
-
-**Not yet verified:** full Windows install and live demo, detection accuracy across people/cameras/lighting, buzzer latency on every ESP32 and buzzer combination, use as a standalone app or certified safety device.
+No license has been selected for this repository.
