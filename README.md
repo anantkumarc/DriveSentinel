@@ -29,7 +29,7 @@
 
 ## Quick Start
 
-Use Python 3.11–3.14, a webcam recognized by OpenCV (or a local video), and an audio output device for audible warnings. The steps below work on supported macOS, Linux, and Windows systems; check [System requirements](#system-requirements) first.
+Install [Python 3.11](https://www.python.org/downloads/) and [Git](https://git-scm.com/downloads), and have a webcam and audio output available. The documented setup targets Apple Silicon macOS and Windows x64; Windows has not yet been tested by this project. Intel Macs are not supported by the current MediaPipe pin. See [System requirements](#system-requirements).
 
 Clone the project:
 
@@ -38,30 +38,37 @@ git clone https://github.com/anantkumarc/DriveSentinel.git
 cd DriveSentinel
 ```
 
-Create and activate a virtual environment. Choose the commands for your system:
+Run setup once. It creates a virtual environment, installs the application and BLE support, and downloads the model files. An internet connection is required for setup.
+
+```sh
+# macOS or Linux: use a Python version from 3.11 through 3.14
+python3 setup_drive.py
+```
+
+```powershell
+# Windows PowerShell: use a Python version from 3.11 through 3.14
+py -3 setup_drive.py
+```
+
+If that command selects an older Python, use `python3.11 setup_drive.py` on macOS/Linux or `py -3.11 setup_drive.py` on Windows after installing Python 3.11.
+
+After setup, activate the environment and start the application:
 
 ```sh
 # macOS or Linux
-python3.11 -m venv .venv
 source .venv/bin/activate
+drive
 ```
 
 ```powershell
 # Windows PowerShell
-py -3.11 -m venv .venv
 .venv\Scripts\Activate.ps1
-```
-
-With the environment active, install, download the verified model files, and run:
-
-```sh
-python -m pip install --upgrade pip
-python -m pip install -e .
-drive --download-models --all
 drive
 ```
 
-This downloads the required face model and optional phone and hand models for the full profile. To download only the required face model, use `drive --download-models`. Check files later with `drive --check-models`. Downloads are verified before installation, and existing files are not overwritten. The `drive` command works from any directory while the virtual environment is active. Press `q` in the preview to close the application.
+If PowerShell blocks activation, use Command Prompt with `.venv\Scripts\activate.bat`, then run `drive`. Once activated, `drive` works from any directory. Press `q` to close the preview. For the phone camera and ESP32 buzzer, use `drive wifi --ble`; see the [BLE guide](docs/esp32-ble-buzzer.md).
+
+Setup verifies downloads and does not overwrite existing models. Re-run it if a download is interrupted. Use `drive --check-models` to check models later.
 
 ## Screenshots and demo
 
@@ -180,6 +187,7 @@ The capture worker keeps a bounded, recent frame for the processing loop. Face l
 │   └── tools/               # Camera and pose calibration commands
 ├── tests/                   # Automated checks for timing, audio, and alerts
 ├── tools/                   # Smoke, replay, fitting, and evaluation utilities
+├── setup_drive.py           # Cross-platform guided installation
 ├── pyproject.toml           # Package metadata and dependencies
 ├── requirements-runtime.in  # Runtime dependency input list
 ├── requirements-dev.in     # Runtime plus packaging tools
@@ -189,7 +197,7 @@ The capture worker keeps a bounded, recent frame for the processing loop. Face l
 ## System requirements
 
 - Python 3.11 or later, below 3.15, as declared in `pyproject.toml` (Python 3.11 is used in the recorded local checks).
-- The pinned MediaPipe package currently provides wheels for macOS 11+ on Apple Silicon, Windows x64/ARM64, and Linux with glibc 2.28+ on x64/ARM64. Intel Macs do not have a wheel for this pinned version. [See the available MediaPipe wheels](https://pypi.org/project/mediapipe/1.2.0/#files).
+- The pinned MediaPipe package provides wheels for Apple Silicon macOS, Windows x64/ARM64, and Linux glibc 2.28+ x64/ARM64. The project’s OpenCV package also needs a compatible wheel. The recommended targets are Apple Silicon macOS 13+ and Windows x64; Intel Macs and Windows ARM64 are not currently supported by the complete pinned dependency set. [See the available MediaPipe wheels](https://pypi.org/project/mediapipe/1.2.0/#files).
 - A webcam recognized by OpenCV, or a local video file. The default camera source is index `0`.
 - An audio output device for audible warnings.
 - On Linux, if audio cannot initialize, install PortAudio using your distribution's package manager (the package is often named `libportaudio2`). [sounddevice installation notes](https://python-sounddevice.readthedocs.io/en/latest/installation.html).
@@ -213,6 +221,8 @@ python -m pip install -e ".[phone,training,resources]"
 ```
 
 The application uses `drive --download-models --all` to obtain its official model files. Model weights are intentionally excluded from Git, checksummed before use, and never overwritten. See [models/README.md](models/README.md) if a download fails or you use custom models.
+
+If model installation reports that hard links are unavailable, move the checkout to a local filesystem that supports them, such as NTFS on Windows or APFS on macOS. If Windows reports an OpenCV DLL error, see the [OpenCV installation FAQ](https://pypi.org/project/opencv-contrib-python/4.14.0.94/#frequently-asked-questions) for the Microsoft runtime requirements.
 
 ## Run and configure
 
