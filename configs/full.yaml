@@ -3,6 +3,8 @@ experiment_id: full_pipeline_research
 
 camera:
   source: 0
+  # For phone hotspot streaming, set source to the IP Webcam stream URL.
+  rotation: 0  # clockwise: 0, 90, 180, or 270
   width: 640
   height: 480
   # Set to the device name shown by the operating system; OpenCV reports only an index.

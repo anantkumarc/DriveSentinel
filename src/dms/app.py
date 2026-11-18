@@ -761,7 +761,7 @@ def _run(args: argparse.Namespace) -> int:
             phone_detector.close()
         raise
 
-    capture = CaptureBackend(source, width=int(camera_cfg["width"]), height=int(camera_cfg["height"]))
+    capture = CaptureBackend(source, width=int(camera_cfg["width"]), height=int(camera_cfg["height"]), rotation=int(camera_cfg.get("rotation", 0)))
     watchdog = CaptureWatchdog(unavailable_after_s=float(eyes_cfg.get("capture_unavailable_after_seconds", 1.0)))
     eye_timer = EyeClosureTimer(
         critical_seconds=float(eyes_cfg["critical_closure_seconds"]),

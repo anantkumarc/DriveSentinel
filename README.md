@@ -230,7 +230,7 @@ drive --config configs/minimal.yaml
 
 Press `q` in the preview to stop a windowed run. Each successful run creates a new directory under `runs/` with `manifest.json` and `observations.jsonl`; local run outputs are ignored by Git. On macOS, grant camera access to the terminal or application that starts the program. Use `drive --help` to see the command-line options.
 
-The application defaults to `configs/full.yaml`. `configs/minimal.yaml` provides an eye-first baseline. The `--config` argument selects a configuration, and `--source` overrides its camera source. The current source options are a camera index or a local video file; network stream URLs are not currently supported.
+The application defaults to `configs/full.yaml`. `configs/minimal.yaml` provides an eye-first baseline. The `--config` argument selects a configuration, and `--source` overrides its camera source. The source can be a camera index, local video file, or HTTP/RTSP stream URL.
 
 ### Selected full-profile settings
 
@@ -327,3 +327,7 @@ Additional project documentation:
 **Ananth Kumar A C**
 
 GitHub: [@anantkumarc](https://github.com/anantkumarc)
+
+### Android phone hotspot camera
+
+Turn on the phone hotspot, connect the computer to it, and start the IP Webcam server. Run `drive wifi` and enter the address shown by IP Webcam, for example `192.168.1.1:8080`. The app adds `/video` automatically. You can also run `drive wifi 192.168.1.1:8080` or use `drive --source` with a complete stream URL. Internet is not required for local traffic, but hotspot access depends on the phone and must be verified on the devices. Set `camera.rotation` to 90, 180, or 270 for clockwise correction when the incoming image is sideways; use 0 for no rotation. Set a landscape resolution in the phone app. Network streams retry after a connection loss; if the stream is unavailable at startup, check the address and restart.

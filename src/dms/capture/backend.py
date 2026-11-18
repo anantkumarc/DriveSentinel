@@ -7,6 +7,7 @@ import threading
 import time
 from pathlib import Path
 from typing import TypeAlias
+from urllib.parse import urlsplit
 
 from dms.capture.packets import CaptureInfo, CaptureSnapshot, CaptureStatus, FramePacket
 
@@ -33,12 +34,16 @@ class CaptureBackend:
         source: CaptureSource,
         width: int = 640,
         height: int = 480,
+        rotation: int = 0,
     ) -> None:
         if isinstance(source, bool) or not isinstance(source, (int, str)):
             raise TypeError("source must be a camera index or a video path")
         if width <= 0 or height <= 0:
             raise ValueError("requested capture width and height must be positive")
 
+        if rotation not in (0, 90, 180, 270):
+            raise ValueError("rotation must be 0, 90, 180, or 270 degrees clockwise")
+        self.rotation = rotation
         self.source = source
         self.width = width
         self.height = height
@@ -52,7 +57,11 @@ class CaptureBackend:
 
     @property
     def is_live_camera(self) -> bool:
-        return isinstance(self.source, int)
+        return isinstance(self.source, int) or self.is_network
+
+    @property
+    def is_network(self) -> bool:
+        return isinstance(self.source, str) and urlsplit(self.source).scheme.lower() in {"http", "https", "rtsp"}
 
     def start(self) -> None:
         if self._thread is not None:
@@ -130,11 +139,15 @@ class CaptureBackend:
 
             if not cap.isOpened():
                 label = "camera" if self.is_live_camera else "video source"
-                self._set_status(
-                    CaptureStatus.UNAVAILABLE,
-                    error=f"could not open {label}: {self.source}",
-                )
-                return
+                if not self.is_network:
+                    self._set_status(CaptureStatus.UNAVAILABLE, error=f"could not open {label}: {self.source}")
+                    return
+                self._set_status(CaptureStatus.STARTING, error="Wi-Fi stream unavailable; retrying")
+                while not cap.isOpened() and not self._stop.wait(2.0):
+                    cap.release()
+                    cap = cv2.VideoCapture(self.source)
+                if self._stop.is_set():
+                    return
 
             raw_fps = float(cap.get(cv2.CAP_PROP_FPS))
             fps_ok = math.isfinite(raw_fps) and 0.1 <= raw_fps <= 240.0
@@ -146,8 +159,8 @@ class CaptureBackend:
             width = int(round(cap.get(cv2.CAP_PROP_FRAME_WIDTH)))
             height = int(round(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
             info = CaptureInfo(
-                source_kind="camera" if self.is_live_camera else "video",
-                source_id=f"camera_index_{self.source}" if self.is_live_camera else "local_video_file",
+                source_kind="network" if self.is_network else "camera" if self.is_live_camera else "video",
+                source_id="network_stream" if self.is_network else f"camera_index_{self.source}" if self.is_live_camera else "local_video_file",
                 width=width,
                 height=height,
                 reported_fps=fps,
@@ -157,9 +170,22 @@ class CaptureBackend:
             self._set_status(CaptureStatus.RUNNING, info=info)
 
             while not self._stop.is_set():
+                if self.is_network and not cap.isOpened():
+                    cap.release()
+                    if self._stop.wait(2.0):
+                        break
+                    cap = cv2.VideoCapture(self.source)
+                    continue
                 ok, image = cap.read()
                 captured_ns = time.monotonic_ns()
                 if not ok or image is None:
+                    if self.is_network:
+                        self._set_status(CaptureStatus.STARTING, error="Wi-Fi stream disconnected; retrying")
+                        cap.release()
+                        if self._stop.wait(2.0):
+                            break
+                        cap = cv2.VideoCapture(self.source)
+                        continue
                     end_state = CaptureStatus.EOF if file_source else CaptureStatus.UNAVAILABLE
                     message = (
                         "end of video file"
@@ -175,6 +201,8 @@ class CaptureBackend:
                     )
                     break
 
+                if self.rotation:
+                    image = cv2.rotate(image, {90: cv2.ROTATE_90_CLOCKWISE, 180: cv2.ROTATE_180, 270: cv2.ROTATE_90_COUNTERCLOCKWISE}[self.rotation])
                 sequence += 1
                 if file_source:
                     frame_step = 1.0 / (fps or 30.0)
