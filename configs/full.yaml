@@ -55,7 +55,7 @@ head_distraction:
   left_yaw_threshold_deg: 15.0
   right_yaw_threshold_deg: 15.0
   downward_pitch_threshold_deg: 18.0
-  head_turn_threshold_seconds: 5.0
+  head_turn_threshold_seconds: 3.0
   downward_head_threshold_seconds: 3.0
   left_yaw_recovery_threshold_deg: 10.0
   right_yaw_recovery_threshold_deg: 10.0

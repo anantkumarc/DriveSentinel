@@ -43,14 +43,35 @@ def main() -> int:
     os.chdir(root)
 
     user_args = sys.argv[1:]
-    if user_args and user_args[0] == "wifi":
-        if len(user_args) > 2:
-            print("Usage: drive wifi [phone address]", file=sys.stderr)
-            return 2
+    if user_args and user_args[0] == "usb":
+        usb_args = user_args[1:]
+        number_arg = usb_args.pop(0) if usb_args and not usb_args[0].startswith("-") else None
         try:
-            address = user_args[1] if len(user_args) == 2 else input("IP Webcam address (for example 192.168.1.1:8080): ")
-            user_args = ["--source", phone_stream_url(address)]
+            number = number_arg if number_arg is not None else input("Camera number (try 1 for your phone; 0 is often the laptop camera): ").strip()
+            if not number.isdecimal():
+                raise ValueError("Enter a nonnegative camera number, such as 1.")
+            user_args = ["--source", str(int(number)), *usb_args]
         except (ValueError, EOFError, KeyboardInterrupt) as exc:
+            print(f"Camera selection cancelled or invalid: {exc}", file=sys.stderr)
+            return 2
+    if user_args and user_args[0] == "wifi":
+        wifi_args = user_args[1:]
+        address_arg = wifi_args.pop(0) if wifi_args and not wifi_args[0].startswith("-") else None
+        try:
+            saved_path = root / "configs" / ".wifi-camera"
+            if address_arg is not None:
+                address = address_arg
+            elif saved_path.is_file():
+                address = saved_path.read_text(encoding="utf-8").strip()
+                print("Connecting to the saved phone camera address. Use `drive wifi ADDRESS` to change it.")
+            else:
+                address = input("IP Webcam address (for example 192.168.1.1:8080): ")
+            stream_url = phone_stream_url(address)
+            if urlsplit(stream_url).query:
+                raise ValueError("Camera URLs with query parameters cannot be saved; use --source instead.")
+            saved_path.write_text(stream_url + "\n", encoding="utf-8")
+            user_args = ["--source", stream_url, *wifi_args]
+        except (ValueError, OSError, EOFError, KeyboardInterrupt) as exc:
             print(f"Camera connection cancelled or invalid: {exc}", file=sys.stderr)
             return 2
     defaults: list[str] = []

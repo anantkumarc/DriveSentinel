@@ -79,6 +79,7 @@ Desktop.ini
 # Per-camera calibration files contain local setup data.
 /configs/camera_calibration.json
 /configs/head_pose_neutral.json
+/configs/.wifi-camera
 
 # Legacy WAV alerts are not used; the current alert is synthesized at runtime.
 /assets/*.wav

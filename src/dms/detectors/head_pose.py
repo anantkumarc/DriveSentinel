@@ -77,12 +77,19 @@ class HeadPoseEstimator:
         neutral_rotation: tuple[tuple[float, ...], ...] | None = None,
         max_reprojection_error_px: float = 12.0,
         neutral_calibration_seconds: float = 2.0,
+        *,
+        neutral_source: str = "facial",
     ) -> None:
         if max_reprojection_error_px <= 0 or neutral_calibration_seconds <= 0:
             raise ValueError("pose error limit and neutral calibration duration must be positive")
         self.calibration = calibration
         self.max_reprojection_error_px = max_reprojection_error_px
         self.neutral_rotation = neutral_rotation
+        if neutral_source not in {"facial", "pnp"}:
+            raise ValueError("neutral source must be facial or pnp")
+        if neutral_source == "pnp" and (calibration is None or neutral_rotation is None):
+            raise ValueError("pnp neutral requires camera calibration and a matching reference")
+        self._neutral_source = neutral_source
         self.neutral_calibration_seconds = neutral_calibration_seconds
         self._neutral_samples: list[Any] = []
         self._neutral_started_ms: int | None = None
@@ -95,6 +102,7 @@ class HeadPoseEstimator:
     def reset_neutral(self) -> None:
         """Restart the in-memory forward-facing baseline enrollment."""
         self.neutral_rotation = None
+        self._neutral_source = "facial"
         self._neutral_samples.clear()
         self._neutral_started_ms = None
         self._neutral_last_ms = None
@@ -105,16 +113,25 @@ class HeadPoseEstimator:
             return None
         with Path(path).open("r", encoding="utf-8") as handle:
             data = json.load(handle)
+        if data.get("pose_source") != "facial":
+            raise ValueError(
+                "Neutral reference has no supported facial pose source; "
+                "recalibrate it with the current calibration tool."
+            )
         matrix = tuple(tuple(float(v) for v in row) for row in data["neutral_rotation_matrix"])
         if len(matrix) != 3 or any(len(row) != 3 for row in matrix):
             raise ValueError("neutral_rotation_matrix must be 3 by 3")
+        if not all(math.isfinite(value) for row in matrix for value in row):
+            raise ValueError("neutral_rotation_matrix must be finite")
         return matrix
 
     def estimate(self, face: FaceLandmarkObservation) -> HeadPoseObservation:
         if not face.valid:
             return self._unknown(face.reason or "face_landmarks_unavailable")
-        if face.transformation_matrix is not None and (self.calibration is None or self.neutral_rotation is None):
+        if face.transformation_matrix is not None and self._neutral_source == "facial":
             return self._estimate_from_facial_matrix(face)
+        if self._neutral_source == "facial":
+            return self._unknown("facial_transformation_matrix_unavailable")
         if self.calibration is None:
             return self._unknown("camera_calibration_missing_and_face_matrix_unavailable")
         if (face.width, face.height) != (self.calibration.width, self.calibration.height):

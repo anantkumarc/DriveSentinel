@@ -91,6 +91,7 @@ def _run(args: argparse.Namespace) -> int:
         neutral = u @ vt
     result = {
         "schema_version": 1,
+        "pose_source": "facial",
         "created_at": datetime.now().astimezone().isoformat(),
         "neutral_rotation_matrix": neutral.tolist(),
         "camera_calibration_sha256": _sha256(calibration_path),

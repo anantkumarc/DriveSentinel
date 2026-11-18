@@ -20,6 +20,7 @@ dependencies = [
 phone = ["onnxruntime>=1.19,<2"]
 training = ["scikit-learn>=1.4,<2", "pandas>=2.1,<4"]
 resources = ["psutil>=5.9,<8"]
+ble = ["bleak>=0.22,<4"]
 
 [project.scripts]
 drive = "dms.launcher:main"

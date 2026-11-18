@@ -382,3 +382,61 @@ class HeadDistractionTrackerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class FullProfileThreeSecondTests(unittest.TestCase):
+    def test_configured_head_poses_trigger_after_three_seconds(self):
+        config_path = Path(__file__).resolve().parents[1] / 'configs' / 'full.yaml'
+        options = yaml.safe_load(config_path.read_text())['head_distraction']
+        self.assertEqual(options['head_turn_threshold_seconds'], 3.0)
+        self.assertEqual(options['downward_head_threshold_seconds'], 3.0)
+        for yaw, pitch, attribute in [(-25.0, 0.0, 'left_active'), (25.0, 0.0, 'right_active'), (0.0, 25.0, 'downward_active')]:
+            with self.subTest(direction=attribute):
+                tracker = HeadDistractionTracker(left_yaw_threshold_deg=15, right_yaw_threshold_deg=15, downward_pitch_threshold_deg=18, head_turn_duration_s=options['head_turn_threshold_seconds'], downward_duration_s=options['downward_head_threshold_seconds'], max_sample_gap_s=0.5, smoothing_time_constant_s=0)
+                for i in range(13):
+                    result = tracker.update(i * 0.25, yaw_deg=yaw, pitch_deg=pitch, roll_deg=0, valid=True)
+                self.assertFalse(getattr(result, attribute))
+                result = tracker.update(3.25, yaw_deg=yaw, pitch_deg=pitch, roll_deg=0, valid=True)
+                self.assertTrue(getattr(result, attribute))
+
+class NeutralCoordinateConsistencyTests(unittest.TestCase):
+    def test_automatic_neutral_keeps_using_facial_matrix_with_camera_calibration(self):
+        from dms.detectors.face_landmarks import FaceLandmarkObservation
+        from dms.detectors.head_pose import CameraCalibration
+        calibration = CameraCalibration(640, 480, ((500., 0., 320.), (0., 500., 240.), (0., 0., 1.)), (), None)
+        estimator = HeadPoseEstimator(calibration, neutral_calibration_seconds=0.1)
+        matrix = tuple(tuple(float(v) for v in row) for row in np.eye(4))
+        for i in range(13):
+            face = FaceLandmarkObservation(640, 480, i * 20, (), 1, None, matrix)
+            estimator.estimate(face)
+        self.assertTrue(estimator.neutral_ready)
+        result = estimator.estimate(FaceLandmarkObservation(640, 480, 300, (), 1, None, matrix))
+        self.assertTrue(result.valid)
+        self.assertAlmostEqual(result.relative_yaw_deg, 0.0)
+        self.assertAlmostEqual(result.relative_pitch_deg, 0.0)
+
+class SavedNeutralReferenceTests(unittest.TestCase):
+    def test_saved_facial_reference_uses_facial_coordinates_even_with_calibration(self):
+        import json
+        import tempfile
+        from dms.detectors.face_landmarks import FaceLandmarkObservation
+        from dms.detectors.head_pose import CameraCalibration
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'neutral.json'
+            path.write_text(json.dumps({'pose_source': 'facial', 'neutral_rotation_matrix': np.eye(3).tolist()}))
+            neutral = HeadPoseEstimator.load_neutral(path)
+        calibration = CameraCalibration(640, 480, ((500., 0., 320.), (0., 500., 240.), (0., 0., 1.)), (), None)
+        estimator = HeadPoseEstimator(calibration, neutral)
+        matrix = tuple(tuple(float(v) for v in row) for row in np.eye(4))
+        obs = estimator.estimate(FaceLandmarkObservation(640, 480, 0, (), 1, None, matrix))
+        self.assertTrue(obs.valid)
+        self.assertAlmostEqual(obs.relative_yaw_deg, 0.0)
+        self.assertAlmostEqual(obs.relative_pitch_deg, 0.0)
+
+    def test_unmarked_legacy_reference_is_rejected_for_recalibration(self):
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'legacy.json'
+            path.write_text(json.dumps({'neutral_rotation_matrix': np.eye(3).tolist()}))
+            with self.assertRaisesRegex(ValueError, 'recalibrate'):
+                HeadPoseEstimator.load_neutral(path)

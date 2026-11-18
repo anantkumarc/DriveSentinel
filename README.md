@@ -247,7 +247,7 @@ Values below come from `configs/full.yaml`. They are configurable engineering st
 | `mouth.open_ratio_threshold` | `0.55` | Mouth-opening ratio for an open observation |
 | `mouth.candidate_after_seconds` | `1.0` | Sustained opening time before a candidate is emitted |
 | `head_distraction.left_yaw_threshold_deg`, `right_yaw_threshold_deg` | `15.0` | Left/right head-turn activation angles |
-| `head_distraction.head_turn_threshold_seconds` | `5.0` | Sustained left/right turn duration |
+| `head_distraction.head_turn_threshold_seconds` | `3.0` | Sustained left/right turn duration |
 | `head_distraction.downward_pitch_threshold_deg` | `18.0` | Downward-pose activation angle |
 | `head_distraction.downward_head_threshold_seconds` | `3.0` | Sustained downward-pose duration |
 | `phone.score_threshold` | `0.20` | Minimum phone-detection score |
@@ -262,7 +262,7 @@ Recovery angles, smoothing, detector confidence gates, phone region, fusion stra
 | Cue | Implemented behavior in the full profile |
 | --- | --- |
 | Forward head position | No head-direction warning while relative yaw and pitch remain inside their configured activation ranges. A stable neutral pose is enrolled at startup unless a neutral reference is supplied. |
-| Left or right turn | Independent yaw timers use a 5-second configured duration. Smoothing and lower recovery angles help reduce frame noise and clear the cue after return toward neutral. |
+| Left or right turn | Independent yaw timers use a 3-second configured duration. Smoothing and lower recovery angles help reduce frame noise and clear the cue after return toward neutral. |
 | Looking downward | A downward-pitch timer uses a 3-second configured duration. The configured pitch sign distinguishes looking down from looking up. |
 | Eye closure | Bilateral eye geometry feeds a timestamp-based closure tracker. The critical eye-closure path uses 1.5 seconds; the rule configuration also uses closure and PERCLOS evidence. |
 | PERCLOS | Reports the closed-eye share over a 60-second window only when at least half of that window has valid observed-time coverage. |
@@ -330,4 +330,24 @@ GitHub: [@anantkumarc](https://github.com/anantkumarc)
 
 ### Android phone hotspot camera
 
-Turn on the phone hotspot, connect the computer to it, and start the IP Webcam server. Run `drive wifi` and enter the address shown by IP Webcam, for example `192.168.1.1:8080`. The app adds `/video` automatically. You can also run `drive wifi 192.168.1.1:8080` or use `drive --source` with a complete stream URL. Internet is not required for local traffic, but hotspot access depends on the phone and must be verified on the devices. Set `camera.rotation` to 90, 180, or 270 for clockwise correction when the incoming image is sideways; use 0 for no rotation. Set a landscape resolution in the phone app. Network streams retry after a connection loss; if the stream is unavailable at startup, check the address and restart.
+Turn on the phone hotspot, connect the computer to it, and start the IP Webcam server. Run `drive wifi` and enter the address shown by IP Webcam, for example `192.168.1.1:8080`. The app adds `/video` automatically and saves the address locally. Next time, `drive wifi` connects using the saved address. If the phone address changes, run `drive wifi 192.168.1.1:8080` with the new address. You can also run `drive wifi 192.168.1.1:8080` or use `drive --source` with a complete stream URL. Internet is not required for local traffic, but hotspot access depends on the phone and must be verified on the devices. Set `camera.rotation` to 90, 180, or 270 for clockwise correction when the incoming image is sideways; use 0 for no rotation. Keep the phone mounted in one orientation, then restart and recalibrate if it moves. Set a landscape resolution in the phone app. Press `F` to toggle fullscreen, `D` for detailed monitoring, and `Q` to quit. The preview preserves the frame aspect ratio; the displayed FPS is based on the time between processed frames. Network streams retry after a connection loss; if the stream is unavailable at startup, check the address and restart.
+
+### Connect a phone using USB
+
+DriveSentinel can use a phone when the operating system recognizes it as a webcam. A charging-only cable is not sufficient; use a USB data cable.
+
+**iPhone and Mac:** Use an iPhone XR or later with iOS 16+, and macOS Ventura 13+. Sign in to the same Apple Account with two-factor authentication on both devices, enable Wi-Fi and Bluetooth, and turn on Continuity Camera under iPhone Settings → General → AirPlay & Continuity (or AirPlay & Handoff). Connect the iPhone to the Mac by USB, tap Trust if asked, and mount the phone in landscape orientation. See [Apple's Continuity Camera requirements](https://support.apple.com/en-us/102546).
+
+**Android and Mac:** Connect the phone using a USB data cable. On the phone, open the USB connection notification and select **Webcam** if it is offered. This option depends on the phone and Android version; if your Vivo does not offer it, the USB connection alone will not create a webcam. Use the hotspot method above or a compatible phone webcam app and Mac companion software. See [Google's Pixel webcam instructions](https://support.google.com/pixelcamera/answer/14274129).
+
+Once the Mac recognizes the phone as a webcam, activate the project environment and run:
+
+```sh
+drive usb
+```
+
+Enter `1` when prompted. If it opens the laptop camera or reports that the camera is unavailable, quit and try another number such as `0` or `2`; device numbers vary. You can also run `drive usb 1` directly. Allow camera access for the terminal in macOS System Settings → Privacy & Security → Camera. Physical phone and Mac combinations have not been validated by the project.
+
+### Optional ESP32 BLE buzzer
+
+See the [ESP32-C3 BLE buzzer guide](docs/esp32-ble-buzzer.md) for wiring, Arduino IDE upload, and `drive wifi --ble`.

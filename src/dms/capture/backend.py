@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import TypeAlias
 from urllib.parse import urlsplit
@@ -25,8 +26,8 @@ class CaptureBackend:
 
     A video file is paced using decoder timestamps. If those timestamps are
     missing or duplicated, a constant-frame-rate estimate is used. A live
-    camera read failure is reported as unavailable; reconnect is manual in
-    this first milestone.
+    Local camera failures are reported as unavailable. Network streams retry
+    after failures using bounded FFmpeg open and read timeouts where supported.
     """
 
     def __init__(
@@ -91,12 +92,28 @@ class CaptureBackend:
                     return None
                 self._condition.wait(remaining)
 
-    def stop(self, join_timeout_s: float = 1.0) -> None:
+    def stop(self, join_timeout_s: float = 3.0) -> None:
         self._stop.set()
         with self._condition:
             self._condition.notify_all()
         if self._thread is not None:
             self._thread.join(max(0.0, join_timeout_s))
+
+    def _open_capture(self, cv2: object):
+        """Use open-time FFmpeg timeouts for network streams.
+
+        OpenCV documents these properties for FFmpeg/GStreamer only; they
+        cannot be set after a stream has opened.  A backend that does not
+        honor them cannot guarantee immediate interruption of a native read.
+        """
+        if self.is_network:
+            return cv2.VideoCapture(
+                self.source,
+                cv2.CAP_FFMPEG,
+                [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 2500,
+                 cv2.CAP_PROP_READ_TIMEOUT_MSEC, 1500],
+            )
+        return cv2.VideoCapture(self.source)
 
     def _set_status(
         self,
@@ -130,8 +147,8 @@ class CaptureBackend:
                 )
                 return
 
-            cap = cv2.VideoCapture(self.source)
-            if self.is_live_camera:
+            cap = self._open_capture(cv2)
+            if isinstance(self.source, int):
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
                 # Best effort only. Not all capture backends support this.
@@ -145,7 +162,7 @@ class CaptureBackend:
                 self._set_status(CaptureStatus.STARTING, error="Wi-Fi stream unavailable; retrying")
                 while not cap.isOpened() and not self._stop.wait(2.0):
                     cap.release()
-                    cap = cv2.VideoCapture(self.source)
+                    cap = self._open_capture(cv2)
                 if self._stop.is_set():
                     return
 
@@ -158,6 +175,8 @@ class CaptureBackend:
                 backend = "unknown"
             width = int(round(cap.get(cv2.CAP_PROP_FRAME_WIDTH)))
             height = int(round(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+            if self.rotation in (90, 270):
+                width, height = height, width
             info = CaptureInfo(
                 source_kind="network" if self.is_network else "camera" if self.is_live_camera else "video",
                 source_id="network_stream" if self.is_network else f"camera_index_{self.source}" if self.is_live_camera else "local_video_file",
@@ -174,7 +193,7 @@ class CaptureBackend:
                     cap.release()
                     if self._stop.wait(2.0):
                         break
-                    cap = cv2.VideoCapture(self.source)
+                    cap = self._open_capture(cv2)
                     continue
                 ok, image = cap.read()
                 captured_ns = time.monotonic_ns()
@@ -184,7 +203,7 @@ class CaptureBackend:
                         cap.release()
                         if self._stop.wait(2.0):
                             break
-                        cap = cv2.VideoCapture(self.source)
+                        cap = self._open_capture(cv2)
                         continue
                     end_state = CaptureStatus.EOF if file_source else CaptureStatus.UNAVAILABLE
                     message = (
@@ -225,8 +244,14 @@ class CaptureBackend:
                     image=image,
                 )
                 with self._condition:
+                    # Actual decoded dimensions can differ from reported values
+                    # and can change after reconnect or phone rotation.
+                    actual_height, actual_width = image.shape[:2]
+                    if self._info and (self._info.width, self._info.height) != (actual_width, actual_height):
+                        self._info = replace(self._info, width=actual_width, height=actual_height)
                     self._latest = packet
                     self._status = CaptureStatus.RUNNING
+                    self._error = None
                     self._condition.notify_all()
 
                 if file_source and wall_origin is not None and media_origin is not None:

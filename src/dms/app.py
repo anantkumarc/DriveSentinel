@@ -92,6 +92,15 @@ def _parse_source(source: str | int) -> CaptureSource:
     return source
 
 
+def _manifest_source(source: CaptureSource) -> str:
+    """Avoid persisting credentials or tokens embedded in network URLs."""
+    from urllib.parse import urlsplit
+
+    if isinstance(source, str) and urlsplit(source).scheme.lower() in {"http", "https", "rtsp"}:
+        return "network_stream"
+    return str(source)
+
+
 def _resolve(root: Path, value: str | Path) -> Path:
     path = Path(value).expanduser()
     return path if path.is_absolute() else root / path
@@ -181,7 +190,7 @@ def _write_manifest(
             "backend": capture_info.backend,
             "configured_device_label": camera_label,
             "device_label_source": "operator_configured" if camera_label else "not_recorded",
-            "requested_source": str(requested_source),
+            "requested_source": _manifest_source(requested_source),
             "requested_width": camera_cfg.get("width"),
             "requested_height": camera_cfg.get("height"),
         },
@@ -403,6 +412,7 @@ def _init_optional_detectors(
                 neutral_rotation = HeadPoseEstimator.load_neutral(neutral_path)
         except (FileNotFoundError, OSError, ValueError, KeyError) as exc:
             status["head_pose"] = f"auto_neutral_fallback:{type(exc).__name__}:{exc}"
+            print(f"Head calibration unavailable: {exc}. Look forward to recalibrate automatically.", file=sys.stderr)
     else:
         status["head_pose"] = "disabled"
     pose = HeadPoseEstimator(
@@ -412,7 +422,7 @@ def _init_optional_detectors(
         float(pose_cfg.get("neutral_calibration_seconds", 2.0)),
     )
     if pose_cfg.get("enabled", False):
-        status["head_pose"] = "ready" if pose.neutral_ready else "auto_neutral_calibration_pending"
+        status.setdefault("head_pose", "ready" if pose.neutral_ready else "auto_neutral_calibration_pending")
 
     phone: OnnxPhoneDetector | MediaPipePhoneDetector | None = None
     if phone_cfg.get("enabled", False):
@@ -478,7 +488,7 @@ def _init_optional_detectors(
     return mouth, mouth_tracker, pose, phone, hands, interaction, assets, status
 
 
-_HUD: dict[str, bool] = {"details": False}
+_HUD: dict[str, Any] = {"details": False, "fullscreen": False, "fps": None, "ble_status": None}
 
 
 def _overlay(
@@ -495,6 +505,7 @@ def _overlay(
     hands: HandObservation,
     interaction: PhoneInteractionObservation,
     head_distraction: HeadDistractionSnapshot,
+    head_monitoring_enabled: bool,
     head_turn_threshold_s: float,
     downward_head_threshold_s: float,
     face_tracking_available: bool,
@@ -537,6 +548,9 @@ def _overlay(
         f"Distraction reason: {', '.join(distraction_alert.reasons or head_distraction.active_reasons) or 'none'}",
         f"Risk: {max(drowsiness_alert.level, distraction_alert.level).name.upper()} | audio: {audio_status} / {audio_playback_state.value}",
     ]
+    ble_status = _HUD["ble_status"]
+    if ble_status is not None:
+        lines.append(f"BLE buzzer: {ble_status.upper()}")
     if _HUD["details"]:
         panel_height = min(view.shape[0] - 1, 18 + 22 * len(lines))
         cv2.rectangle(view, (0, 0), (min(width - 1, 1200), min(view.shape[0] - 1, panel_height)), (20, 24, 30), -1)
@@ -544,16 +558,21 @@ def _overlay(
             cv2.putText(view, line, (14, 24 + index * 22), cv2.FONT_HERSHEY_SIMPLEX, 0.48, color, 1, cv2.LINE_AA)
     else:
         worst = max(drowsiness_alert.level, distraction_alert.level)
-        if capture_health != "available" or eye.state is EyeState.UNKNOWN:
-            state_name, state_color = "GRAY  MONITORING UNAVAILABLE", (150, 150, 150)
-        elif worst >= AlertLevel.HIGH:
+        if worst >= AlertLevel.HIGH:
             state_name, state_color = "RED  WARNING", (0, 0, 255)
+        elif capture_health != "available" or eye.state is EyeState.UNKNOWN or (head_monitoring_enabled and not head_distraction.valid) or (ble_status is not None and ble_status != "connected"):
+            state_name, state_color = "GRAY  MONITORING UNAVAILABLE", (150, 150, 150)
         elif worst is AlertLevel.ELEVATED:
             state_name, state_color = "YELLOW  VALIDATING", (0, 215, 255)
         else:
             state_name, state_color = "GREEN  NORMAL MONITORING", (0, 200, 0)
         reasons = ", ".join(distraction_alert.reasons or head_distraction.active_reasons)
         phone_text = "PRESENT" if interaction.phone_present_in_roi else ("none" if interaction.phone_presence_valid else "unknown")
+        fps = _HUD["fps"]
+        capture_text = f"Camera {capture_health.upper()} | {width}x{view.shape[0]} | FPS {_fmt(fps, 1)}"
+        if ble_status is not None and ble_status != "connected":
+            capture_text += f" | BLE {ble_status.upper()}"
+        head_text = (f"Head {head_distraction.direction.value.upper()} | L {head_distraction.left_duration_s:.1f}s R {head_distraction.right_duration_s:.1f}s DOWN {head_distraction.downward_duration_s:.1f}s" if head_distraction.valid else "Head tracking unavailable: face camera, look forward to calibrate" if head_monitoring_enabled else "Head monitoring disabled")
         summary = (
             f"EAR {_fmt(eye.ear, 2)} | closed {_fmt(closure.observed_duration_s, 1)}s | "
             f"PERCLOS {_fmt(perclos.perclos, 2)} | head {head_distraction.direction.value.upper()} | phone {phone_text}"
@@ -561,15 +580,16 @@ def _overlay(
         if reasons:
             summary += f" | {reasons}"
         overlay = view.copy()
-        cv2.rectangle(overlay, (0, 0), (width - 1, 50), (20, 24, 30), -1)
+        cv2.rectangle(overlay, (0, 0), (width - 1, 70), (20, 24, 30), -1)
         cv2.rectangle(overlay, (0, view.shape[0] - 24), (width - 1, view.shape[0] - 1), (20, 24, 30), -1)
         view = cv2.addWeighted(overlay, 0.65, view, 0.35, 0)
         cv2.circle(view, (18, 17), 8, state_color, -1)
         cv2.putText(view, state_name, (36, 23), cv2.FONT_HERSHEY_SIMPLEX, 0.6, state_color, 2, cv2.LINE_AA)
-        cv2.putText(view, summary, (12, 43), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (235, 235, 235), 1, cv2.LINE_AA)
+        cv2.putText(view, capture_text, (12, 43), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (235, 235, 235), 1, cv2.LINE_AA)
+        cv2.putText(view, head_text, (12, 62), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (235, 235, 235), 1, cv2.LINE_AA)
         cv2.putText(
             view,
-            "C calibrate eyes | N head baseline | D details | Q quit | research prototype, not safety certified",
+            "C calibrate eyes | N head baseline | D details | F fullscreen | Q quit | research prototype, not safety certified",
             (10, view.shape[0] - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1, cv2.LINE_AA,
         )
     if drowsiness_alert.level >= AlertLevel.HIGH:
@@ -866,7 +886,7 @@ def _run(args: argparse.Namespace) -> int:
         max_sample_gap_s=alert_gap_s,
         repeat_notifications=False,
     )
-    audio_enabled = bool(alert_cfg.get("audio_enabled", False))
+    audio_enabled = bool(alert_cfg.get("audio_enabled", False)) and not args.ble
     audio = AudioAlertManager(
         enabled=audio_enabled,
         sample_rate_hz=int(alert_cfg.get("buzzer_sample_rate_hz", 48000)),
@@ -875,6 +895,11 @@ def _run(args: argparse.Namespace) -> int:
         blocksize=int(alert_cfg.get("audio_blocksize", 512)),
     )
     detector_status["audio"] = audio.status
+    ble_buzzer = None
+    if args.ble:
+        from dms.hardware.ble_buzzer import BleBuzzer
+        ble_buzzer = BleBuzzer(name=args.ble_name)
+        print(f"Searching for BLE buzzer {args.ble_name}...", file=sys.stderr, flush=True)
     logger: JsonlWriter | None = None
     preview = bool(ui_cfg.get("show_preview", True)) and not args.headless
     start_ns = time.monotonic_ns()
@@ -914,10 +939,22 @@ def _run(args: argparse.Namespace) -> int:
             resource_process = psutil.Process()
         except ImportError:
             pass
+        if preview:
+            import cv2 as _cv2
+            cv2 = _cv2
+            cv2.namedWindow("Driver Monitoring Research Prototype", cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+            cv2.resizeWindow("Driver Monitoring Research Prototype", 960, 540)
         capture.start()
         packet = capture.read_newer(0, timeout_s=5.0)
         snapshot = capture.snapshot()
         if packet is None:
+            if capture.is_network:
+                raise RuntimeError(
+                    "No video arrived from the phone camera. Check that IP Webcam's server is "
+                    "running, the Mac is connected to the phone hotspot, and the saved address "
+                    "matches the address shown on the phone. If it changed, run "
+                    "`drive wifi NEW_ADDRESS --ble` (omit --ble if unused)."
+                )
             raise RuntimeError(f"capture did not produce a frame: {snapshot.error or snapshot.status.value}")
         watchdog.observe_packet(packet)
         last_packet = packet
@@ -951,6 +988,7 @@ def _run(args: argparse.Namespace) -> int:
         last_resource_wall = resource_wall_origin
 
         while True:
+            _HUD["ble_status"] = ble_buzzer.status if ble_buzzer is not None else None
             now_ns = time.monotonic_ns()
             run_time_s = (now_ns - start_ns) / 1_000_000_000.0
             if args.seconds is not None and run_time_s >= args.seconds:
@@ -961,6 +999,12 @@ def _run(args: argparse.Namespace) -> int:
                 if packet is None:
                     snapshot = capture.snapshot()
                     current_health, age_s = watchdog.health(snapshot)
+                    if current_health != "available":
+                        # Stale camera frames are not evidence of recovery, but
+                        # must not leave a laptop tone sounding indefinitely.
+                        audio.set_active(False)
+                        if ble_buzzer is not None:
+                            ble_buzzer.set_active(False)
                     current_head_distraction = head_distraction_tracker.update(
                         run_time_s,
                         yaw_deg=None,
@@ -1000,6 +1044,7 @@ def _run(args: argparse.Namespace) -> int:
                             hands=HandObservation(False, (), "no_fresh_frame"),
                             interaction=PhoneInteractionObservation("unknown", False, False, "no_fresh_frame", None),
                             head_distraction=current_head_distraction,
+                            head_monitoring_enabled=bool(head_distraction_cfg.get("enabled", False)),
                             head_turn_threshold_s=head_distraction_tracker.head_turn_duration_s,
                             downward_head_threshold_s=head_distraction_tracker.downward_duration_s,
                             face_tracking_available=False,
@@ -1014,6 +1059,9 @@ def _run(args: argparse.Namespace) -> int:
                         key = cv2.waitKey(1) & 0xFF
                         if key == ord("q"):
                             break
+                        if key in {ord("f"), ord("F")}:
+                            _HUD["fullscreen"] = not _HUD["fullscreen"]
+                            cv2.setWindowProperty("Driver Monitoring Research Prototype", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN if _HUD["fullscreen"] else cv2.WINDOW_NORMAL)
                         if key in {ord("d"), ord("D")}:
                             _HUD["details"] = not _HUD["details"]
                         if key in {ord("c"), ord("C")}:
@@ -1027,6 +1075,8 @@ def _run(args: argparse.Namespace) -> int:
                     continue
 
             processing_start = time.perf_counter()
+            if last_packet is not None and packet.captured_monotonic_ns > last_packet.captured_monotonic_ns:
+                _HUD["fps"] = 1e9 / (packet.captured_monotonic_ns - last_packet.captured_monotonic_ns)
             watchdog.observe_packet(packet)
             if source_origin_s is None:
                 source_origin_s = packet.source_time_s
@@ -1244,6 +1294,8 @@ def _run(args: argparse.Namespace) -> int:
                 key=lambda alert: alert.level,
             )
             audio.set_alert(leading_alert.level.name.lower(), leading_alert.episode_id)
+            if ble_buzzer is not None:
+                ble_buzzer.set_active(leading_alert.level is not AlertLevel.NONE)
             audio_state = audio.playback_state.value
             if audio_state != last_audio_state:
                 logger.write({
@@ -1340,6 +1392,7 @@ def _run(args: argparse.Namespace) -> int:
                     hands=current_hands,
                     interaction=current_interaction,
                     head_distraction=current_head_distraction,
+                    head_monitoring_enabled=bool(head_distraction_cfg.get("enabled", False)),
                     head_turn_threshold_s=head_distraction_tracker.head_turn_duration_s,
                     downward_head_threshold_s=head_distraction_tracker.downward_duration_s,
                     face_tracking_available=face.valid,
@@ -1354,6 +1407,9 @@ def _run(args: argparse.Namespace) -> int:
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord("q"):
                     break
+                if key in {ord("f"), ord("F")}:
+                    _HUD["fullscreen"] = not _HUD["fullscreen"]
+                    cv2.setWindowProperty("Driver Monitoring Research Prototype", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN if _HUD["fullscreen"] else cv2.WINDOW_NORMAL)
                 if key in {ord("d"), ord("D")}:
                     _HUD["details"] = not _HUD["details"]
                 if key in {ord("c"), ord("C")}:
@@ -1396,6 +1452,8 @@ def _run(args: argparse.Namespace) -> int:
         # Stop the warning stream first when the operator exits or capture
         # closes, then release camera and detector resources.
         audio.close()
+        if ble_buzzer is not None:
+            ble_buzzer.close()
         capture.stop()
         face_detector.close()
         if hand_detector is not None:
@@ -1438,6 +1496,8 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Local multimodal driver-monitoring research prototype")
     parser.add_argument("--config", default="configs/full.yaml", help="YAML configuration path")
     parser.add_argument("--source", help="camera index (for example 0) or local video file path")
+    parser.add_argument("--ble", action="store_true", help="enable the optional ESP32 BLE buzzer")
+    parser.add_argument("--ble-name", default="DriveSentinel-Buzzer", help="advertised BLE buzzer name")
     parser.add_argument(
         "--check-models",
         action="store_true",
